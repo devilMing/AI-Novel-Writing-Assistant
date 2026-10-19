@@ -30,6 +30,8 @@ import {
   saveLLMSelectionSettings,
 } from "../../../../services/settings/LLMSelectionSettingsService";
 import { secretStore } from "../../../../services/settings/secretStore";
+import { chatGPTAuthService } from "../../chatgpt-auth/application/ChatGPTAuthService";
+import { serializeModelList } from "../../../../llm/modelCatalog";
 
 const ROUTE_TEMPERATURES: Record<ModelRouteTaskType, number> = {
   planner: 0.3,
@@ -60,7 +62,10 @@ function buildCustomProviderId(name: string): LLMProvider {
 }
 
 async function listProviderOptions(): Promise<QuickSetupProviderOption[]> {
-  const records = await secretStore.listProviders();
+  const [records, chatGPTStatus] = await Promise.all([
+    secretStore.listProviders(),
+    chatGPTAuthService.status().catch(() => ({ connected: false, models: [] })),
+  ]);
   const recordByProvider = new Map(records.map((record) => [record.provider, record]));
   const builtins: QuickSetupProviderOption[] = SUPPORTED_PROVIDERS.map((provider) => {
     const config = PROVIDERS[provider];
@@ -71,20 +76,28 @@ async function listProviderOptions(): Promise<QuickSetupProviderOption[]> {
     const currentBaseURL = normalizeOptionalText(record?.baseURL)
       ?? getProviderEnvBaseUrl(provider)
       ?? config.baseURL;
-    const hasRequiredKey = !providerRequiresApiKey(provider)
+    const usesChatGPTPlan = provider === "openai" && record?.authMode === "chatgpt_oauth";
+    const hasRequiredKey = usesChatGPTPlan
+      ? chatGPTStatus.connected
+      : !providerRequiresApiKey(provider)
       || Boolean(normalizeOptionalText(record?.key) ?? getProviderEnvApiKey(provider));
+    const chatGPTModels = provider === "openai"
+      ? chatGPTStatus.models.map((item: { slug: string }) => item.slug)
+      : [];
     return {
       id: provider,
       kind: "builtin",
       name: config.name,
       requiresApiKey: providerRequiresApiKey(provider),
+      authMode: usesChatGPTPlan ? "chatgpt_oauth" : "bearer",
       configured: (record?.isActive ?? true) && hasRequiredKey && Boolean(currentModel),
       active: record?.isActive ?? true,
       currentModel,
       defaultModel: config.defaultModel,
       currentBaseURL,
       defaultBaseURL: config.baseURL,
-      models: Array.from(new Set([...(config.models ?? []), currentModel].filter(Boolean))),
+      currentReasoningEffort: normalizeReasoningEffort(record?.reasoningEffort),
+      models: Array.from(new Set([...chatGPTModels, ...(config.models ?? []), currentModel].filter(Boolean))),
     };
   });
   const customs: QuickSetupProviderOption[] = records
@@ -97,12 +110,14 @@ async function listProviderOptions(): Promise<QuickSetupProviderOption[]> {
         kind: "custom",
         name: normalizeOptionalText(record.displayName) ?? record.provider,
         requiresApiKey: false,
+        authMode: record.authMode === "x-api-key" || record.authMode === "none" ? record.authMode : "bearer",
         configured: record.isActive && Boolean(currentModel && currentBaseURL),
         active: record.isActive,
         currentModel,
         defaultModel: currentModel,
         currentBaseURL,
         defaultBaseURL: currentBaseURL,
+        currentReasoningEffort: normalizeReasoningEffort(record.reasoningEffort),
         models: currentModel ? [currentModel] : [],
       };
     });
@@ -206,14 +221,21 @@ export async function completeQuickSetup(
   const resolvedInput = await resolveProviderInput(input);
   const provider = resolvedInput.provider;
   const model = input.model.trim();
-  const apiKey = normalizeOptionalText(input.apiKey) ?? resolvedInput.existingKey;
+  const usesChatGPTPlan = provider === "openai" && input.authMode === "chatgpt_oauth";
+  if (input.authMode === "chatgpt_oauth" && provider !== "openai") {
+    throw new AppError("ChatGPT 网页授权只能用于 OpenAI。", 400);
+  }
+  if (usesChatGPTPlan && !(await chatGPTAuthService.status()).connected) {
+    throw new AppError("请先完成 ChatGPT 网页授权。", 400);
+  }
+  const apiKey = usesChatGPTPlan ? undefined : normalizeOptionalText(input.apiKey) ?? resolvedInput.existingKey;
   const baseURL = normalizeOptionalText(input.baseURL)
     ?? resolvedInput.existingBaseURL
     ?? (isBuiltInProvider(provider) ? PROVIDERS[provider].baseURL : undefined);
   if (!model) {
     throw new AppError("请选择或填写一个文本模型。", 400);
   }
-  if (isBuiltInProvider(provider) && providerRequiresApiKey(provider) && !apiKey) {
+  if (!usesChatGPTPlan && isBuiltInProvider(provider) && providerRequiresApiKey(provider) && !apiKey) {
     throw new AppError("请填写 API Key。", 400);
   }
   if (!baseURL) {
@@ -223,9 +245,11 @@ export async function completeQuickSetup(
   const probe = await llmConnectivityService.testConnection({
     provider,
     apiKey,
+    authMode: input.authMode,
     model,
     baseURL,
     probeMode: "both",
+    structuredResponseFormat: usesChatGPTPlan ? "prompt_json" : undefined,
   });
   const plainReady = probe.plain?.ok === true;
   const structuredReady = probe.structured?.ok === true;
@@ -242,16 +266,21 @@ export async function completeQuickSetup(
     key: apiKey ?? null,
     model,
     baseURL,
+    authMode: usesChatGPTPlan ? "chatgpt_oauth" : "bearer",
     isActive: true,
     reasoningEnabled: true,
-    reasoningEffort: "high",
+    reasoningEffort: usesChatGPTPlan ? normalizeReasoningEffort(input.reasoningEffort) : "high",
     hiddenModels: "[]",
+    ...(usesChatGPTPlan
+      ? { availableModels: serializeModelList((await chatGPTAuthService.status()).models.map((item) => item.slug)) }
+      : {}),
   });
   setProviderSecretCache(provider, {
     displayName: record.displayName ?? undefined,
     key: record.key ?? undefined,
     model: record.model ?? undefined,
     baseURL: record.baseURL ?? undefined,
+    authMode: record.authMode === "chatgpt_oauth" ? "chatgpt_oauth" : "bearer",
     reasoningEnabled: record.reasoningEnabled ?? true,
     reasoningEffort: normalizeReasoningEffort(record.reasoningEffort),
     concurrencyLimit: record.concurrencyLimit ?? 0,

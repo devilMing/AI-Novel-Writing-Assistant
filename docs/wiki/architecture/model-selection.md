@@ -27,7 +27,10 @@
 - 顶部“模型设置”属于日常厂商管理入口，打开独立大弹窗，直接复用设置页的厂商配置组件与保存逻辑；配置内容按需加载。弹窗内只适配容器间距和边框，不维护第二套表单或保存接口。
 - 首次创作环境准备继续使用快速配置向导。厂商管理弹窗打开期间，自动提示和创作页面的就绪检查不得叠加向导；关闭管理界面后，未就绪环境仍按原有规则提示。
 - 添加、修改或移除厂商后，除厂商配置、余额和模型候选外，还应刷新快速配置状态与首次小说引导投影，避免其他入口继续显示保存前的创作可用性。
-- 自定义厂商的鉴权方式属于厂商连接合同，模型目录、连接测试和正式生成必须读取同一设置。当前只支持常见的 `Authorization: Bearer`、`x-api-key` 和无需鉴权三种模式；不得让模型目录能连接而正式生成仍固定发送 Bearer。
+- 自定义厂商的鉴权方式属于厂商连接合同，模型目录、连接测试和正式生成必须读取同一设置。常见方式包括 `Authorization: Bearer`、`x-api-key` 和无需鉴权；OpenAI 内置厂商还支持 `chatgpt_oauth`，不得把 ChatGPT 网页授权令牌当成长期 API Key 保存或发给其他厂商。
+- ChatGPT 网页授权由本机服务端持有 OIDC/PKCE 事务、刷新令牌和账户模型目录。浏览器只接收授权地址与脱敏状态，不接收 access token、refresh token 或 ID token。首次注册使用稳定主机 ID，回调只接受 `127.0.0.1` loopback URI，并校验 state、nonce、签名、issuer、audience、账户 identity 与套餐使用 scope。
+- `chatgpt_oauth` 的正式生成只能调用 OpenAI 公共 Responses API。每次请求必须 `store:false`、`stream:true`，完整消费到 `response.completed`；系统消息转为 `instructions`，不得发送预览流程不支持的 temperature、max_output_tokens 或持久会话字段。结构化任务使用提示词 JSON 策略，避免依赖该授权通道未承诺的原生格式参数。
+- ChatGPT 账户的模型候选来自带同一 OAuth access token 的 `/v1/models` 响应，只展示 `visibility=list` 的模型并使用服务端返回顺序。访问令牌临近过期时序列化刷新，避免旋转 refresh token 被并发请求重复使用。
 - 用户填写的 API 地址可以是版本根地址，也可以直接是 `/models` 地址。模型目录请求只在路径尚未以 `/models` 结尾时追加该段，避免 Gemini 或网关地址变成重复路径。
 - 自定义厂商已获取的模型目录保存到 `APIKey.availableModels`；新增厂商、保存配置和显式刷新都要更新该目录，设置状态读取时将目录与当前模型合并后再应用 `hiddenModels` 过滤。当前模型不能替代整个目录，否则用户重新打开编辑弹窗时会只看到刚选的模型。
 - DeepSeek 的新配置推荐值是 `deepseek-flash`。旧名 `deepseek-v4-flash` / `deepseek-v4-pro` 仍按同一套思考开关和结构化能力处理，这个推荐只影响未保存模型时的配置引导与内置候选顺序，不覆盖已有厂商配置、顶部当前选择或任务级路由。
@@ -60,6 +63,8 @@
 - 隐藏模型仍出现在普通候选：检查厂商的 `hiddenModels` 是否正确解析，并确认该模型是否被当前选择或已有路由保护。
 - DeepSeek 思考深度未生效：先确认使用的是 Flash/Pro（含 `deepseek-flash`、`deepseek-pro` 及旧的 V4 名称）和 OpenAI 兼容协议，再检查结构化任务是否按能力档案强制关闭了思考。
 - 自定义厂商返回 401/403：先核对鉴权方式是否与接口文档一致，再分别检查模型目录、连接测试和正式生成是否使用同一 `authMode`；不要只在刷新模型接口临时改请求头。
+- ChatGPT 网页授权完成但没有模型：核对 token response 是否包含 `chatgpt.tokens.use.direct` 与 `resource.invoke`，再检查 `/v1/models` 是否返回 `visibility=list`；身份登录成功不等于已允许套餐调用。
+- ChatGPT 生成中途失败：必须区分 `response.failed`、`response.incomplete` 与流提前结束。只有收到 `response.completed` 才算成功；套餐用量不足应引导用户查看 ChatGPT 用量或重新授权，不能退回未声明的 ChatGPT `backend-api`。
 - 模型目录地址出现 `/models/models`：检查地址归一函数是否把用户填写的完整目录地址再次拼接，不要为单个厂商增加硬编码例外。
 - Kimi K3 返回 temperature 参数错误：先确认实际模型名进入 Kimi 能力兼容层（包括自定义中转厂商），再检查最终客户端配置是否在构造请求前把 temperature 收敛为 `1.0`；不要要求用户反复调整顶部偏好来规避固定参数约束。
 - 本地模型生成世界观在约 2 分钟时中断：先看「模型与厂商」里的单次生成最长等待是否仍是 2 分钟，再确认失败的是按主题生成或骨架生成。正文生成没有这项上限。页面若先报网络失败，检查这两次生成请求的页面等待是否仍长于服务端上限。
@@ -86,8 +91,12 @@ Ollama 的 OpenAI 兼容接口 `/v1/chat/completions` 在关闭思考时发送 `
 - `client/src/pages/settings/SettingsPage.tsx`
 - `client/src/pages/settings/models/`
 - `client/src/components/onboarding/CreationSetupContext.tsx`
+- `server/src/modules/setup/chatgpt-auth/`
 
 ## 来源文档
 
 - [模块边界与文档治理](./module-boundaries.md)
 - [项目协作规则](../../../AGENTS.md)
+- [OpenAI：Sign in with ChatGPT（开源应用）](https://developers.openai.com/siwc/token-sharing-open-source)
+- [OpenAI：Models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
+- [OpenAI：Preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)

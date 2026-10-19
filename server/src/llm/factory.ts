@@ -7,6 +7,9 @@ import type { PromptInvocationMeta } from "../prompting/core/promptTypes";
 import { secretStore } from "../services/settings/secretStore";
 import { resolveModelTemperature } from "./capabilities";
 import { createAnthropicLLM } from "./anthropicClient";
+import { createChatGPTPlanLLM } from "../modules/setup/chatgpt-auth/application/ChatGPTPlanLLM";
+import { openAIFetch } from "../modules/setup/chatgpt-auth/infrastructure/OpenAINetwork";
+import { chatGPTAuthService } from "../modules/setup/chatgpt-auth/application/ChatGPTAuthService";
 import { attachLLMDebugLogging } from "./debugLogging";
 import { attachLLMRequestLimiter } from "./requestLimiter";
 import { attachLLMRequestGuard } from "./requestGuard";
@@ -120,7 +123,7 @@ function normalizeOptionalTimeoutMs(value: number | undefined): number | undefin
 }
 
 function normalizeProviderAuthMode(value: unknown): ProviderAuthMode {
-  return value === "x-api-key" || value === "none" ? value : "bearer";
+  return value === "x-api-key" || value === "none" || value === "chatgpt_oauth" ? value : "bearer";
 }
 
 function normalizeProviderSecret(secret: ProviderSecret): ProviderSecret {
@@ -262,6 +265,7 @@ export async function resolveLLMClientOptions(
   }
 
   const dbSecret = await resolveProviderSecret(resolvedProvider);
+  const authMode = normalizeProviderAuthMode(options.authMode ?? dbSecret?.authMode);
   const providerName = isBuiltInProvider(resolvedProvider)
     ? PROVIDERS[resolvedProvider].name
     : dbSecret?.displayName ?? resolvedProvider;
@@ -269,7 +273,7 @@ export async function resolveLLMClientOptions(
     ?? dbSecret?.key
     ?? getProviderEnvApiKey(resolvedProvider);
 
-  if (!apiKey && providerRequiresApiKey(resolvedProvider)) {
+  if (!apiKey && authMode !== "chatgpt_oauth" && providerRequiresApiKey(resolvedProvider)) {
     throw new Error(`未配置 ${providerName} 的 API Key。`);
   }
 
@@ -289,8 +293,6 @@ export async function resolveLLMClientOptions(
   if (!baseURL) {
     throw new Error(`未配置 ${providerName} 的 API URL。`);
   }
-  const authMode = normalizeProviderAuthMode(options.authMode ?? dbSecret?.authMode);
-
   const temperature = resolveModelTemperature(resolvedProvider, model, resolvedTemperature);
   const timeoutMs = normalizeOptionalTimeoutMs(options.timeoutMs);
   const concurrencyLimit = normalizeLimitValue(dbSecret?.concurrencyLimit);
@@ -359,7 +361,7 @@ export async function resolveLLMClientOptions(
     concurrencyLimit,
     requestIntervalMs,
     reasoningEnabled: reasoningBehavior.reasoningEnabled,
-    reasoningEffort: reasoningBehavior.reasoningEffort,
+    reasoningEffort: authMode === "chatgpt_oauth" ? requestedReasoningEffort : reasoningBehavior.reasoningEffort,
     modelKwargs: Object.keys(modelKwargs).length > 0 ? modelKwargs : undefined,
     includeRawResponse: reasoningBehavior.includeRawResponse,
     requestProtocol,
@@ -388,7 +390,15 @@ export function buildOpenAICompatibleDefaultHeaders(
 }
 
 export function createLLMFromResolvedOptions(resolved: ResolvedLLMClientOptions): ChatOpenAI {
-  const llm = resolved.requestProtocol === "anthropic"
+  const llm = resolved.authMode === "chatgpt_oauth"
+    ? createChatGPTPlanLLM({
+      model: resolved.model,
+      reasoningEffort: resolved.reasoningEffort ?? undefined,
+      getAccessToken: () => chatGPTAuthService.getAccessToken(),
+      fetchImpl: openAIFetch,
+      timeoutMs: resolved.timeoutMs,
+    })
+    : resolved.requestProtocol === "anthropic"
     ? createAnthropicLLM({
       apiKey: resolved.apiKey,
       model: resolved.model,

@@ -34,6 +34,7 @@ import {
 import { authMiddleware } from "../middleware/auth";
 import { AppError } from "../middleware/errorHandler";
 import { validate } from "../middleware/validate";
+import { chatGPTAuthService } from "../modules/setup/chatgpt-auth/application/ChatGPTAuthService";
 import { ragServices } from "../services/rag";
 import { providerBalanceService } from "../services/settings/ProviderBalanceService";
 import { secretStore } from "../services/settings/secretStore";
@@ -228,7 +229,7 @@ function normalizeProviderLimit(value: number | null | undefined): number {
 }
 
 function normalizeProviderAuthMode(value: unknown): ProviderAuthMode {
-  return value === "x-api-key" || value === "none" ? value : "bearer";
+  return value === "x-api-key" || value === "none" || value === "chatgpt_oauth" ? value : "bearer";
 }
 
 function getFallbackModels(provider: LLMProvider, currentModel?: string): string[] {
@@ -243,14 +244,17 @@ function buildBuiltInProviderStatus(
     key?: string | null;
     model?: string | null;
     baseURL?: string | null;
+    authMode?: string | null;
     isActive?: boolean;
     reasoningEnabled?: boolean | null;
     reasoningEffort?: string | null;
     hiddenModels?: string | null;
     concurrencyLimit?: number | null;
     requestIntervalMs?: number | null;
+    availableModels?: string | null;
   } | undefined,
   imageModel: string | undefined,
+  chatGPTConnected: boolean,
 ): BuiltInProviderStatus {
   const savedKey = normalizeOptionalText(item?.key);
   const envKey = getProviderEnvApiKey(provider);
@@ -261,12 +265,19 @@ function buildBuiltInProviderStatus(
     ?? getProviderEnvBaseUrl(provider)
     ?? PROVIDERS[provider].baseURL;
   const requiresApiKey = providerRequiresApiKey(provider);
+  const currentAuthMode = normalizeProviderAuthMode(item?.authMode);
+  const usesChatGPTPlan = provider === "openai" && currentAuthMode === "chatgpt_oauth";
   const hiddenModels = parseHiddenModels(item?.hiddenModels);
-  const fallbackModels = getFallbackModels(provider, configuredModel);
+  const fallbackModels = Array.from(new Set([
+    ...parseModelList(item?.availableModels),
+    ...getFallbackModels(provider, configuredModel),
+  ]));
   const currentModel = configuredModel ?? fallbackModels[0] ?? "";
   const models = filterHiddenModels(fallbackModels, hiddenModels, currentModel);
   const currentImageModel = imageModel ?? getDefaultImageModel(provider) ?? null;
-  const isConfigured = requiresApiKey ? Boolean(effectiveKey && currentModel) : Boolean(currentModel && currentBaseURL);
+  const isConfigured = usesChatGPTPlan
+    ? chatGPTConnected && Boolean(currentModel)
+    : requiresApiKey ? Boolean(effectiveKey && currentModel) : Boolean(currentModel && currentBaseURL);
   const supportsReasoningEffort = isDeepSeekThinkingModeProvider(provider, currentBaseURL, currentModel);
 
   return {
@@ -277,7 +288,7 @@ function buildBuiltInProviderStatus(
     currentModel,
     currentImageModel,
     currentBaseURL,
-    currentAuthMode: "bearer",
+    currentAuthMode,
     models,
     imageModels: Array.from(new Set([...getImageModelOptions(provider), currentImageModel ?? ""].filter(Boolean))),
     defaultModel: PROVIDERS[provider].defaultModel,
@@ -553,7 +564,10 @@ router.get(
 
 router.get("/api-keys", async (_req, res, next) => {
   try {
-    const keys = await secretStore.listProviders();
+    const [keys, chatGPTStatus] = await Promise.all([
+      secretStore.listProviders(),
+      chatGPTAuthService.status().catch(() => ({ connected: false })),
+    ]);
     const keyMap = new Map(keys.map((item) => [item.provider, item]));
     const allProviders = Array.from(new Set([
       ...SUPPORTED_PROVIDERS,
@@ -561,7 +575,7 @@ router.get("/api-keys", async (_req, res, next) => {
     ]));
     const imageModelMap = await getProviderImageModelMap(allProviders);
     const builtInProviders = SUPPORTED_PROVIDERS.map((provider) =>
-      buildBuiltInProviderStatus(provider, keyMap.get(provider), imageModelMap.get(provider)),
+      buildBuiltInProviderStatus(provider, keyMap.get(provider), imageModelMap.get(provider), chatGPTStatus.connected),
     );
     const customProviders = keys
       .filter((item) => !isBuiltInProvider(item.provider))

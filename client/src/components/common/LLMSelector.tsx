@@ -167,6 +167,10 @@ export default function LLMSelector({
   );
   const providerSelectValue = hasRunnableProviders ? effectiveProvider : NO_PROVIDER_VALUE;
   const shouldWaitForGlobalHydration = !value && !onChange && !store.hasHydratedSelection;
+  const shouldWaitForProviderRefresh = !value
+    && !onChange
+    && apiKeySettingsQuery.isFetching
+    && !providerOptions.includes(currentValue.provider);
 
   const updateValue = useCallback((next: LLMSelectorValue) => {
     const normalizedModel = resolveModel(next.model, providerModelsMap[next.provider] ?? []);
@@ -201,7 +205,7 @@ export default function LLMSelector({
   }, [onChange, providerModelsMap, saveSelectionMutation, store]);
 
   useEffect(() => {
-    if (shouldWaitForGlobalHydration) {
+    if (shouldWaitForGlobalHydration || shouldWaitForProviderRefresh) {
       return;
     }
     if (!hasRunnableProviders) {
@@ -225,6 +229,7 @@ export default function LLMSelector({
     resolvedModel,
     resolvedTemperature,
     shouldWaitForGlobalHydration,
+    shouldWaitForProviderRefresh,
     updateValue,
   ]);
 

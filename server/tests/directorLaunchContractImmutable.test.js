@@ -71,6 +71,39 @@ test("ordinary task initialization rejects changes to the created launch contrac
   assert.equal(workflow.bootstrapCalls.length, 0);
 });
 
+test("candidate retry may execute with a run-level model override without rewriting the launch contract", async () => {
+  const workflow = createWorkflow({
+    provider: "ollama",
+    model: "gpt-6.1-sol",
+    temperature: 0.5,
+    llmOverride: { provider: "openai", model: "gpt-6.1-sol", temperature: 0.7 },
+  });
+  const writer = new DirectorTaskStateWriter(workflow);
+
+  await writer.initializeTask({
+    workflowTaskId: "task-existing",
+    lane: "auto_director",
+    title: "重试候选生成",
+    directorState: {
+      launch: {
+        provider: "openai",
+        model: "gpt-6.1-sol",
+        temperature: 0.7,
+        legacyContext: {},
+      },
+      run: { candidateStage: { mode: "generate" } },
+    },
+  });
+
+  assert.equal(workflow.bootstrapCalls.length, 1);
+  const persisted = workflow.bootstrapCalls[0].seedPayload;
+  assert.equal(persisted.provider, "ollama");
+  assert.equal(persisted.model, "gpt-6.1-sol");
+  assert.equal(persisted.temperature, 0.5);
+  assert.deepEqual(persisted.llmOverride, { provider: "openai", model: "gpt-6.1-sol", temperature: 0.7 });
+  assert.deepEqual(persisted.candidateStage, { mode: "generate" });
+});
+
 test("unbound candidate first finalization fills absent launch fields without changing populated ones", async () => {
   let persisted = {
     runMode: "auto_to_execution",

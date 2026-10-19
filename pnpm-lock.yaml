@@ -263,6 +263,9 @@ importers:
       helmet:
         specifier: ^8.1.0
         version: 8.1.0
+      jose:
+        specifier: 5.10.0
+        version: 5.10.0
       langchain:
         specifier: ^1.2.28
         version: 1.2.28(@langchain/core@1.1.29(openai@6.27.0(ws@8.19.0)(zod@4.3.6)))(openai@6.27.0(ws@8.19.0)(zod@4.3.6))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(zod-to-json-schema@3.25.1(zod@4.3.6))
@@ -272,6 +275,9 @@ importers:
       sharp:
         specifier: ^0.35.1
         version: 0.35.1
+      undici:
+        specifier: 7.16.0
+        version: 7.16.0
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -4795,6 +4801,9 @@ packages:
     resolution: {integrity: sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ==}
     hasBin: true
 
+  jose@5.10.0:
+    resolution: {integrity: sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg==}
+
   jotai-optics@0.4.0:
     resolution: {integrity: sha512-osbEt9AgS55hC4YTZDew2urXKZkaiLmLqkTS/wfW5/l0ib8bmmQ7kBXSFaosV6jDDWSp00IipITcJARFHdp42g==}
     peerDependencies:
@@ -6544,6 +6553,10 @@ packages:
 
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
+
+  undici@7.16.0:
+    resolution: {integrity: sha512-QEg3HPMll0o3t2ourKwOeUAZ159Kn9mx5pnzHRQO8+Wixmh88YdZRiIwat0iNzNNXn0yoEtXJqFpyW7eM8BV7g==}
+    engines: {node: '>=20.18.1'}
 
   unified@11.0.5:
     resolution: {integrity: sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==}
@@ -11756,6 +11769,8 @@ snapshots:
 
   jiti@2.6.1: {}
 
+  jose@5.10.0: {}
+
   jotai-optics@0.4.0(jotai@2.8.4(@types/react@19.2.14)(react@19.2.4))(optics-ts@2.4.1):
     dependencies:
       jotai: 2.8.4(@types/react@19.2.14)(react@19.2.4)
@@ -13948,6 +13963,8 @@ snapshots:
   undici-types@6.21.0: {}
 
   undici-types@7.18.2: {}
+
+  undici@7.16.0: {}
 
   unified@11.0.5:
     dependencies:

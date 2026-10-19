@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { ApiResponse } from "@ai-novel/shared/types/api";
 import type { CompleteQuickSetupRequest } from "@ai-novel/shared/types/onboarding";
+import { REASONING_EFFORTS } from "@ai-novel/shared/types/llm";
 import { z } from "zod";
 import { authMiddleware } from "../../../../middleware/auth";
 import { validate } from "../../../../middleware/validate";
@@ -17,8 +18,10 @@ const completeQuickSetupSchema = z.object({
   provider: z.string().trim().min(1).optional(),
   customProviderName: z.string().trim().min(1).optional(),
   apiKey: z.string().trim().optional(),
+  authMode: z.enum(["bearer", "x-api-key", "none", "chatgpt_oauth"]).optional(),
   baseURL: z.string().trim().url("API 地址格式不正确。").optional(),
   model: z.string().trim().min(1, "模型名称不能为空。"),
+  reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
 });
 
 router.use(authMiddleware);

@@ -1,4 +1,4 @@
-import type { LLMProvider } from "./llm";
+import type { LLMProvider, ProviderAuthMode, ReasoningEffort } from "./llm";
 import type { ModelRouteTaskType } from "./novel";
 import type { NovelWorkflowCheckpoint } from "./novelWorkflow";
 import type { TaskStatus } from "./task";
@@ -8,12 +8,14 @@ export interface QuickSetupProviderOption {
   kind: "builtin" | "custom";
   name: string;
   requiresApiKey: boolean;
+  authMode: ProviderAuthMode;
   configured: boolean;
   active: boolean;
   currentModel: string;
   defaultModel: string;
   currentBaseURL: string;
   defaultBaseURL: string;
+  currentReasoningEffort: ReasoningEffort;
   models: string[];
 }
 
@@ -38,8 +40,24 @@ export interface CompleteQuickSetupRequest {
   provider?: LLMProvider;
   customProviderName?: string;
   apiKey?: string;
+  authMode?: ProviderAuthMode;
   baseURL?: string;
   model: string;
+  reasoningEffort?: ReasoningEffort;
+}
+
+export interface ChatGPTPlanModel {
+  slug: string;
+  displayName: string;
+}
+
+export interface ChatGPTAuthStatus {
+  connected: boolean;
+  pending: boolean;
+  email: string | null;
+  displayName: string | null;
+  models: ChatGPTPlanModel[];
+  error: string | null;
 }
 
 export interface CompleteQuickSetupResult {

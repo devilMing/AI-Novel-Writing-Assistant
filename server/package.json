@@ -61,9 +61,11 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "helmet": "^8.1.0",
+    "jose": "5.10.0",
     "langchain": "^1.2.28",
     "morgan": "^1.10.1",
     "sharp": "^0.35.1",
+    "undici": "7.16.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

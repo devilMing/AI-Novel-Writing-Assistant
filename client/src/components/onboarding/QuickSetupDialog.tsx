@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
   ArrowLeft,
@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   CircleAlert,
   KeyRound,
+  LogIn,
   Loader2,
   PlugZap,
   ServerCog,
@@ -18,8 +19,13 @@ import type {
   QuickSetupProviderOption,
   QuickSetupStatus,
 } from "@ai-novel/shared/types/onboarding";
-import type { LLMProvider } from "@ai-novel/shared/types/llm";
-import { completeQuickSetup } from "@/api/onboarding";
+import type { LLMProvider, ReasoningEffort } from "@ai-novel/shared/types/llm";
+import {
+  completeQuickSetup,
+  disconnectChatGPTAuthorization,
+  getChatGPTAuthStatus,
+  startChatGPTAuthorization,
+} from "@/api/onboarding";
 import { previewCustomProviderModels } from "@/api/settings";
 import { queryKeys } from "@/api/queryKeys";
 import { AppDialogContent, Dialog } from "@/components/ui/dialog";
@@ -50,6 +56,8 @@ interface SetupForm {
   apiKey: string;
   baseURL: string;
   model: string;
+  reasoningEffort: ReasoningEffort;
+  openAIAuthMode: "api_key" | "chatgpt_oauth";
 }
 
 const EMPTY_FORM: SetupForm = {
@@ -59,6 +67,8 @@ const EMPTY_FORM: SetupForm = {
   apiKey: "",
   baseURL: "",
   model: "",
+  reasoningEffort: "high",
+  openAIAuthMode: "api_key",
 };
 
 function providerDescription(provider: QuickSetupProviderOption): string {
@@ -76,6 +86,16 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
   const [customModels, setCustomModels] = useState<string[]>([]);
   const [customModelsMessage, setCustomModelsMessage] = useState("");
   const [showAllProviderChoices, setShowAllProviderChoices] = useState(false);
+  const isOpenAI = form.providerKind === "builtin" && form.provider === "openai";
+  const usesChatGPTPlan = isOpenAI && form.openAIAuthMode === "chatgpt_oauth";
+
+  const chatGPTStatusQuery = useQuery({
+    queryKey: ["settings", "chatgpt-auth"],
+    queryFn: getChatGPTAuthStatus,
+    enabled: props.open && isOpenAI,
+    refetchInterval: (query) => query.state.data?.data?.pending ? 1_000 : false,
+  });
+  const chatGPTStatus = chatGPTStatusQuery.data?.data ?? null;
 
   useEffect(() => {
     if (props.open && props.forceConfiguration) {
@@ -124,6 +144,8 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
       apiKey: "",
       baseURL: preferred.currentBaseURL || preferred.defaultBaseURL,
       model: preferred.currentModel || preferred.defaultModel,
+      reasoningEffort: preferred.currentReasoningEffort,
+      openAIAuthMode: preferred.authMode === "chatgpt_oauth" ? "chatgpt_oauth" : "api_key",
     });
   }, [form.provider, form.providerKind, props.open, props.status]);
 
@@ -164,6 +186,51 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
     },
   });
 
+  const chatGPTStartMutation = useMutation({
+    mutationFn: async (authWindow: Window | null) => {
+      const response = await startChatGPTAuthorization();
+      const url = response.data?.authorizationUrl;
+      if (url) {
+        if (authWindow) authWindow.location.replace(url);
+        else window.open(url, "_blank", "noopener,noreferrer");
+      } else {
+        authWindow?.close();
+      }
+      return response;
+    },
+    onSuccess: async () => {
+      await chatGPTStatusQuery.refetch();
+    },
+  });
+
+  const startChatGPTWebAuthorization = () => {
+    const authWindow = window.open("about:blank", "_blank");
+    if (authWindow) authWindow.opener = null;
+    chatGPTStartMutation.mutate(authWindow, {
+      onError: () => authWindow?.close(),
+    });
+  };
+
+  const chatGPTDisconnectMutation = useMutation({
+    mutationFn: disconnectChatGPTAuthorization,
+    onSuccess: async () => {
+      setForm((current) => ({ ...current, model: selectedProvider?.defaultModel ?? "gpt-5" }));
+      await chatGPTStatusQuery.refetch();
+    },
+  });
+
+  useEffect(() => {
+    if (!usesChatGPTPlan || !chatGPTStatus?.connected || chatGPTStatus.models.length === 0) return;
+    setForm((current) => {
+      const available = new Set(chatGPTStatus.models.map((item) => item.slug));
+      return {
+        ...current,
+        baseURL: "https://api.openai.com/v1",
+        model: available.has(current.model) ? current.model : chatGPTStatus.models[0].slug,
+      };
+    });
+  }, [chatGPTStatus?.connected, chatGPTStatus?.models, usesChatGPTPlan]);
+
   const chooseProvider = (provider: QuickSetupProviderOption) => {
     setForm({
       providerKind: provider.kind,
@@ -172,6 +239,8 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
       apiKey: "",
       baseURL: provider.currentBaseURL || provider.defaultBaseURL,
       model: provider.currentModel || provider.defaultModel,
+      reasoningEffort: provider.currentReasoningEffort,
+      openAIAuthMode: provider.authMode === "chatgpt_oauth" ? "chatgpt_oauth" : "api_key",
     });
     setCustomModels([]);
     setCustomModelsMessage("");
@@ -185,6 +254,8 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
       apiKey: "",
       baseURL: "",
       model: "",
+      reasoningEffort: "high",
+      openAIAuthMode: "api_key",
     });
     setCustomModels([]);
     setCustomModelsMessage("");
@@ -195,13 +266,14 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
   };
 
   const canContinueProvider = form.providerKind === "custom" || Boolean(form.provider);
-  const requiresApiKey = form.providerKind === "builtin" && selectedProvider?.requiresApiKey !== false;
-  const hasSavedKey = selectedProvider?.configured === true;
+  const requiresApiKey = !usesChatGPTPlan && form.providerKind === "builtin" && selectedProvider?.requiresApiKey !== false;
+  const hasSavedKey = selectedProvider?.configured === true && selectedProvider.authMode !== "chatgpt_oauth";
   const canSubmit = Boolean(
     form.model.trim()
     && form.baseURL.trim()
     && (form.providerKind === "builtin" ? form.provider : form.customProviderName.trim())
-    && (!requiresApiKey || form.apiKey.trim() || hasSavedKey),
+    && (!requiresApiKey || form.apiKey.trim() || hasSavedKey)
+    && (!usesChatGPTPlan || chatGPTStatus?.connected),
   );
   const showFirstNovelHandoff = shouldShowFirstNovelHandoff({
     configurationSucceeded: completeMutation.isSuccess,
@@ -215,8 +287,10 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
       ...(form.provider ? { provider: form.provider } : {}),
       ...(form.providerKind === "custom" ? { customProviderName: form.customProviderName.trim() } : {}),
       ...(form.apiKey.trim() ? { apiKey: form.apiKey.trim() } : {}),
+      authMode: usesChatGPTPlan ? "chatgpt_oauth" : "bearer",
       baseURL: form.baseURL.trim(),
       model: form.model.trim(),
+      ...(usesChatGPTPlan ? { reasoningEffort: form.reasoningEffort } : {}),
     });
   };
 
@@ -375,7 +449,11 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
           <div className="space-y-5">
             <div>
               <h3 className="font-semibold">{form.providerKind === "custom" ? "添加第三方厂商" : `连接 ${selectedProvider?.name ?? "模型厂商"}`}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">API Key 只会保存到本机或服务端密钥存储，不会显示在完成结果中。</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {usesChatGPTPlan
+                  ? "授权凭据只会加密保存在本机服务端，不会写入浏览器存储。"
+                  : "API Key 只会保存到本机或服务端密钥存储，不会显示在完成结果中。"}
+              </p>
               {form.providerKind === "custom" ? (
                 <p className="mt-1 text-xs text-muted-foreground">厂商名称、API 地址和模型将保存为独立配置，不会覆盖已有内置厂商。</p>
               ) : null}
@@ -386,6 +464,51 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
                 <Input value={form.customProviderName} placeholder="例如：我的模型网关" onChange={(event) => setForm((current) => ({ ...current, customProviderName: event.target.value }))} />
               </label>
             ) : null}
+            {isOpenAI ? (
+              <div className="rounded-xl bg-muted/35 p-1">
+                <div className="grid grid-cols-2 gap-1">
+                  <button
+                    type="button"
+                    className={cn("rounded-lg px-3 py-2 text-sm transition", form.openAIAuthMode === "api_key" && "bg-background font-medium shadow-sm")}
+                    onClick={() => setForm((current) => ({ ...current, openAIAuthMode: "api_key" }))}
+                  >
+                    使用 API Key
+                  </button>
+                  <button
+                    type="button"
+                    className={cn("rounded-lg px-3 py-2 text-sm transition", usesChatGPTPlan && "bg-background font-medium shadow-sm")}
+                    onClick={() => setForm((current) => ({ ...current, openAIAuthMode: "chatgpt_oauth", apiKey: "", baseURL: "https://api.openai.com/v1" }))}
+                  >
+                    使用 ChatGPT 套餐
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {usesChatGPTPlan ? (
+              <div className="rounded-xl border border-primary/15 bg-primary/[0.035] p-4">
+                {chatGPTStatus?.connected ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700"><CheckCircle2 className="h-4 w-4" /> 正在使用 ChatGPT 套餐</div>
+                      <div className="mt-1 text-xs text-muted-foreground">{chatGPTStatus.displayName || chatGPTStatus.email || "已授权账户"} · 可用模型 {chatGPTStatus.models.length} 个</div>
+                    </div>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => chatGPTDisconnectMutation.mutate()} disabled={chatGPTDisconnectMutation.isPending}>断开</Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-sm font-semibold">用 Plus / Pro 套餐完成创作</div>
+                      <div className="mt-1 text-xs leading-5 text-muted-foreground">会在浏览器中打开 OpenAI 官方授权页；不会读取你的 ChatGPT 对话，也不需要 API Key。</div>
+                    </div>
+                    <Button type="button" onClick={startChatGPTWebAuthorization} disabled={chatGPTStartMutation.isPending || chatGPTStatus?.pending}>
+                      {chatGPTStartMutation.isPending || chatGPTStatus?.pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+                      {chatGPTStatus?.pending ? "等待浏览器授权" : "Continue with ChatGPT"}
+                    </Button>
+                    {chatGPTStatus?.error ? <p className="text-xs text-destructive">{chatGPTStatus.error}</p> : null}
+                  </div>
+                )}
+              </div>
+            ) : (
             <label className="block space-y-1.5">
               <span className="flex items-center gap-2 text-sm font-medium"><KeyRound className="h-4 w-4" /> API Key {requiresApiKey ? "" : "（可选）"}</span>
               <Input
@@ -396,10 +519,11 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
                 onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))}
               />
             </label>
-            <label className="block space-y-1.5">
+            )}
+            {!usesChatGPTPlan ? <label className="block space-y-1.5">
               <span className="text-sm font-medium">API 地址</span>
               <Input value={form.baseURL} placeholder="https://api.example.com/v1" onChange={(event) => setForm((current) => ({ ...current, baseURL: event.target.value }))} />
-            </label>
+            </label> : null}
             {form.providerKind === "custom" ? (
               <div className="flex flex-wrap items-center gap-3">
                 <Button type="button" variant="outline" size="sm" onClick={() => previewMutation.mutate()} disabled={!form.baseURL.trim() || previewMutation.isPending}>
@@ -409,9 +533,9 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
                 {customModelsMessage ? <span className="text-xs text-muted-foreground">{customModelsMessage}</span> : null}
               </div>
             ) : null}
-            {modelOptions.length > 0 ? (
+            {(usesChatGPTPlan ? chatGPTStatus?.models.map((item) => item.slug) ?? [] : modelOptions).length > 0 ? (
               <div className="flex flex-wrap gap-2">
-                {modelOptions.slice(0, 8).map((model) => (
+                {(usesChatGPTPlan ? chatGPTStatus?.models.map((item) => item.slug) ?? [] : modelOptions).slice(0, 8).map((model) => (
                   <button
                     key={model}
                     type="button"
@@ -425,8 +549,26 @@ export default function QuickSetupDialog(props: QuickSetupDialogProps) {
             ) : null}
             <label className="block space-y-1.5">
               <span className="text-sm font-medium">文本模型</span>
-              <Input value={form.model} placeholder="选择上方模型，或直接填写模型名称" onChange={(event) => setForm((current) => ({ ...current, model: event.target.value }))} />
+              <Input value={form.model} readOnly={usesChatGPTPlan} placeholder="选择上方模型，或直接填写模型名称" onChange={(event) => setForm((current) => ({ ...current, model: event.target.value }))} />
             </label>
+            {usesChatGPTPlan ? (
+              <label className="block space-y-1.5">
+                <span className="text-sm font-medium">推理强度</span>
+                <select
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={form.reasoningEffort}
+                  onChange={(event) => setForm((current) => ({
+                    ...current,
+                    reasoningEffort: event.target.value as ReasoningEffort,
+                  }))}
+                >
+                  <option value="low">低（更快）</option>
+                  <option value="high">高（推荐）</option>
+                  <option value="max">最大（更充分）</option>
+                </select>
+                <span className="block text-xs text-muted-foreground">强度越高，复杂规划与审校通常越充分，但响应时间也可能更长。</span>
+              </label>
+            ) : null}
             <div className="rounded-lg border bg-muted/20 p-3 text-xs leading-5 text-muted-foreground">
               完成后，这个模型会作为规划、正文、审核、修复、重规划和摘要等核心任务的初始默认值。
             </div>

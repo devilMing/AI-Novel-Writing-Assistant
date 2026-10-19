@@ -31,6 +31,7 @@ type WorkflowDelegateName =
 export type DirectorTaskStateWorkflowPort = Partial<Pick<NovelWorkflowService, WorkflowDelegateName>>;
 
 type WorkflowBootstrapInput = Parameters<NovelWorkflowService["bootstrapTask"]>[0];
+const LLM_OVERRIDE_LAUNCH_FIELDS = ["provider", "model", "temperature"] as const;
 
 export type DirectorTaskInitializationInput = Omit<WorkflowBootstrapInput, "seedPayload"> & {
   directorVersion?: "v1" | "v2";
@@ -66,6 +67,13 @@ function findLaunchContractConflict(
   // Unknown legacy payload is compatibility context, not a typed contract.
   for (const [key, value] of Object.entries(incoming.launch)) {
     if (key === "legacyContext") continue;
+    const llmOverride = current.run.llmOverride as Record<string, unknown> | null | undefined;
+    if (LLM_OVERRIDE_LAUNCH_FIELDS.includes(key as (typeof LLM_OVERRIDE_LAUNCH_FIELDS)[number])
+      && llmOverride
+      && Object.prototype.hasOwnProperty.call(llmOverride, key)
+      && stableJson(llmOverride[key]) === stableJson(value)) {
+      continue;
+    }
     if (currentLaunch[key] === undefined && allowMissingFields) continue;
     if (value !== undefined && stableJson(currentLaunch[key]) !== stableJson(value)) {
       return key;
@@ -85,12 +93,30 @@ function assertPreservesManualRecoveryLock(data: { pendingManualRecovery?: unkno
 function mergeLaunchState(
   current: DirectorTaskState["launch"],
   incoming: DirectorTaskState["launch"],
+  llmOverride?: DirectorTaskState["run"]["llmOverride"],
 ): DirectorTaskState["launch"] {
-  return {
+  const merged = {
     ...current,
     ...incoming,
     legacyContext: { ...current.legacyContext, ...incoming.legacyContext },
   };
+  const currentRecord = current as unknown as Record<string, unknown>;
+  const incomingRecord = incoming as unknown as Record<string, unknown>;
+  const mergedRecord = merged as unknown as Record<string, unknown>;
+  const overrideRecord = llmOverride as Record<string, unknown> | null | undefined;
+  for (const key of LLM_OVERRIDE_LAUNCH_FIELDS) {
+    if (!overrideRecord
+      || !Object.prototype.hasOwnProperty.call(overrideRecord, key)
+      || stableJson(overrideRecord[key]) !== stableJson(incomingRecord[key])) {
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(currentRecord, key)) {
+      mergedRecord[key] = currentRecord[key];
+    } else {
+      delete mergedRecord[key];
+    }
+  }
+  return merged;
 }
 
 export interface DirectorTaskStateWriteOptions {
@@ -138,7 +164,7 @@ export class DirectorTaskStateWriter {
         directorState = {
           launch: mayReplaceLaunchContract
             ? directorState.launch
-            : mergeLaunchState(currentState.launch, directorState.launch),
+            : mergeLaunchState(currentState.launch, directorState.launch, currentState.run.llmOverride),
           run: { ...currentState.run, ...directorState.run },
         };
         replacePersistedState = mayReplaceLaunchContract;

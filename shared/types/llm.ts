@@ -18,7 +18,7 @@ export type LLMProvider = BuiltinLLMProvider | (string & {});
 export const REASONING_EFFORTS = ["low", "high", "max"] as const;
 export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 
-export const PROVIDER_AUTH_MODES = ["bearer", "x-api-key", "none"] as const;
+export const PROVIDER_AUTH_MODES = ["bearer", "x-api-key", "none", "chatgpt_oauth"] as const;
 export type ProviderAuthMode = typeof PROVIDER_AUTH_MODES[number];
 
 export function isBuiltinLLMProvider(provider: string): provider is BuiltinLLMProvider {

@@ -15,6 +15,7 @@ const {
 const { NovelFramingSuggestionService } = require("../dist/services/novel/NovelFramingSuggestionService.js");
 const { ragServices } = require("../dist/services/rag/index.js");
 const { providerBalanceService } = require("../dist/services/settings/ProviderBalanceService.js");
+const { chatGPTAuthService } = require("../dist/modules/setup/chatgpt-auth/application/ChatGPTAuthService.js");
 const { STYLE_EXTRACTION_TIMEOUT_MS_KEY } = require("../dist/services/settings/StyleEngineRuntimeSettingsService.js");
 const { prisma } = require("../dist/db/prisma.js");
 
@@ -599,6 +600,53 @@ test("GET /api/settings/api-keys uses lightweight local model metadata", async (
     } else {
       process.env.DEEPSEEK_MODEL = previousDeepSeekModel;
     }
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("GET /api/settings/api-keys treats connected ChatGPT OAuth as a runnable OpenAI provider", async () => {
+  const originalFindMany = prisma.aPIKey.findMany;
+  const originalStatus = chatGPTAuthService.status;
+  prisma.aPIKey.findMany = async () => ([
+    {
+      id: "api-key-openai-chatgpt",
+      provider: "openai",
+      key: null,
+      model: "gpt-6.1-sol",
+      baseURL: "https://api.openai.com/v1",
+      authMode: "chatgpt_oauth",
+      isActive: true,
+      reasoningEnabled: true,
+      reasoningEffort: "high",
+      availableModels: JSON.stringify(["gpt-6.1-sol"]),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+  ]);
+  chatGPTAuthService.status = async () => ({
+    connected: true,
+    pending: false,
+    email: "writer@example.com",
+    displayName: "Writer",
+    models: [{ slug: "gpt-6.1-sol", displayName: "GPT-6.1 Sol" }],
+    error: null,
+  });
+
+  const app = createApp();
+  const server = http.createServer(app);
+  const port = await listen(server);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/settings/api-keys`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    const openai = payload.data.find((item) => item.provider === "openai");
+    assert.ok(openai);
+    assert.equal(openai.currentAuthMode, "chatgpt_oauth");
+    assert.equal(openai.isConfigured, true);
+    assert.ok(openai.models.includes("gpt-6.1-sol"));
+  } finally {
+    prisma.aPIKey.findMany = originalFindMany;
+    chatGPTAuthService.status = originalStatus;
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });

@@ -200,14 +200,15 @@ const {executeOpeningCommand,prepareOpeningRetry}=require(path.join(server,'dist
  const originalContract=JSON.parse((await prisma.directorNextRun.findFirst({where:{novelId:opening.novelId}})).contractJson);
  assert.equal(originalContract.driver,'assisted');assert.equal(originalContract.chapterRange,null);assert.ok(originalContract.launchInput.storyInput.includes('新书标题'));
  assert.deepEqual(await prisma.novelWorkflowTask.findMany({where:{id:{in:before.map(row=>row.id)}},orderBy:{id:'asc'}}),before);
+ await prisma.appSetting.upsert({where:{key:'llm.currentSelection'},update:{value:JSON.stringify({provider:'openai',model:'gpt-6.1-sol',temperature:0.7})},create:{key:'llm.currentSelection',value:JSON.stringify({provider:'openai',model:'gpt-6.1-sol',temperature:0.7})}});
  await prisma.novelWorkflowTask.create({data:{directorVersion:'v2',id:'interrupted-opening',lane:'auto_director',title:'传输中断',pendingManualRecovery:true,lastError:'transport_error'}});
- const failedOpening=await prisma.directorRunCommand.create({data:{id:'failed-opening',taskId:'interrupted-opening',commandType:'generate_candidates',idempotencyKey:'original',status:'failed',errorMessage:'transport_error',payloadJson:JSON.stringify({candidatesRequest:{idea:'保存的想法',model:'same-model'}})}});
+ const failedOpening=await prisma.directorRunCommand.create({data:{id:'failed-opening',taskId:'interrupted-opening',commandType:'generate_candidates',idempotencyKey:'original',status:'failed',errorMessage:'transport_error',payloadJson:JSON.stringify({candidatesRequest:{idea:'保存的想法',provider:'ollama',model:'same-model',temperature:0.5}})}});
  const retried=await prepareOpeningRetry('interrupted-opening');const retryReplay=await prepareOpeningRetry('interrupted-opening');
  assert.equal(retried.commandId,retryReplay.commandId);assert.notEqual(retried.commandId,failedOpening.id);
  assert.deepEqual(await prisma.directorRunCommand.findUnique({where:{id:failedOpening.id}}),failedOpening);
  const retryCommand=await prisma.directorRunCommand.findUniqueOrThrow({where:{id:retried.commandId}});
- assert.equal(retryCommand.payloadJson,failedOpening.payloadJson);assert.equal(retryCommand.commandType,'generate_candidates');assert.equal(retryCommand.status,'queued');
- assert.equal((await prisma.novelWorkflowTask.findUnique({where:{id:'interrupted-opening'}})).pendingManualRecovery,false);
+ const retryPayload=JSON.parse(retryCommand.payloadJson);assert.equal(retryPayload.candidatesRequest.idea,'保存的想法');assert.equal(retryPayload.candidatesRequest.provider,'openai');assert.equal(retryPayload.candidatesRequest.model,'gpt-6.1-sol');assert.equal(retryPayload.candidatesRequest.temperature,0.7);assert.equal(retryCommand.commandType,'generate_candidates');assert.equal(retryCommand.status,'queued');
+ const retriedTask=await prisma.novelWorkflowTask.findUnique({where:{id:'interrupted-opening'}});assert.equal(retriedTask.pendingManualRecovery,false);assert.deepEqual(JSON.parse(retriedTask.seedPayloadJson).llmOverride,{provider:'openai',model:'gpt-6.1-sol',temperature:0.7});
  await prisma.novelWorkflowTask.create({data:{directorVersion:'v2',id:'crashed-opening',lane:'auto_director',title:'进程中断'}});
  const crashed=await prisma.directorRunCommand.create({data:{id:'crashed-command',taskId:'crashed-opening',commandType:'generate_candidates',idempotencyKey:'crashed',status:'running',leaseOwner:'dead-worker',leaseExpiresAt:new Date(Date.now()-60_000),payloadJson:failedOpening.payloadJson}});
  const {NovelWorkflowTaskAdapter}=require(path.join(server,'dist/services/task/adapters/NovelWorkflowTaskAdapter'));
@@ -218,7 +219,8 @@ const {executeOpeningCommand,prepareOpeningRetry}=require(path.join(server,'dist
  assert.notEqual(recoveredCrash.commandId,crashed.id);
  const stale=await prisma.directorRunCommand.findUniqueOrThrow({where:{id:crashed.id}});
  assert.equal(stale.status,'stale');assert.equal(stale.payloadJson,crashed.payloadJson);
- assert.equal((await prisma.directorRunCommand.findUniqueOrThrow({where:{id:recoveredCrash.commandId}})).payloadJson,crashed.payloadJson);
+ const recoveredCrashPayload=JSON.parse((await prisma.directorRunCommand.findUniqueOrThrow({where:{id:recoveredCrash.commandId}})).payloadJson);
+ assert.equal(recoveredCrashPayload.candidatesRequest.idea,'保存的想法');assert.equal(recoveredCrashPayload.candidatesRequest.provider,'openai');assert.equal(recoveredCrashPayload.candidatesRequest.model,'gpt-6.1-sol');assert.equal(recoveredCrashPayload.candidatesRequest.temperature,0.7);
  assert.equal((await prepareOpeningRetry('crashed-opening')).commandId,recoveredCrash.commandId);
  await prisma.novelWorkflowTask.create({data:{directorVersion:'v2',id:'live-opening',lane:'auto_director',title:'有效租约'}});
  const live=await prisma.directorRunCommand.create({data:{id:'live-command',taskId:'live-opening',commandType:'generate_candidates',idempotencyKey:'live',status:'running',leaseOwner:'live-worker',leaseExpiresAt:new Date(Date.now()+60_000)}});

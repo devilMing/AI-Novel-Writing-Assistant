@@ -1,11 +1,42 @@
 import {prisma} from "../../../db/prisma";
 import {AppError} from "../../../middleware/errorHandler";
 import {toAcceptedResponse} from "../../../services/novel/director/commands/DirectorCommandServiceHelpers";
+import {readDirectorTaskState, serializeDirectorTaskState} from "../../../services/novel/director/state/DirectorStateReader";
+import {getLLMSelectionSettings, type LLMSelectionSettings} from "../../../services/settings/LLMSelectionSettingsService";
 
 const retryable = new Set(["generate_candidates","refine_candidates","patch_candidate","refine_titles","confirm_candidate"]);
+const requestKeyByCommandType: Record<string,string> = {
+  generate_candidates:"candidatesRequest",
+  refine_candidates:"refinementRequest",
+  patch_candidate:"candidatePatchRequest",
+  refine_titles:"titleRefineRequest",
+  confirm_candidate:"confirmRequest",
+};
+
+function refreshRetryLLMSelection(payloadJson: string | null, commandType: string, selection: LLMSelectionSettings | null): string | null {
+  const requestKey = requestKeyByCommandType[commandType];
+  if (!payloadJson || !selection || !requestKey) return payloadJson;
+  try {
+    const payload = JSON.parse(payloadJson) as Record<string,unknown>;
+    const request = payload?.[requestKey];
+    if (!request || typeof request !== "object" || Array.isArray(request)) return payloadJson;
+    return JSON.stringify({
+      ...payload,
+      [requestKey]:{
+        ...(request as Record<string,unknown>),
+        provider:selection.provider,
+        model:selection.model,
+        temperature:selection.temperature,
+      },
+    });
+  } catch {
+    return payloadJson;
+  }
+}
 
 /** Explicit recovery of the latest pre-book command. Historical failure rows remain unchanged. */
 export async function prepareOpeningRetry(taskId: string) {
+  const selection = await getLLMSelectionSettings();
   return prisma.$transaction(async tx => {
     const task = await tx.novelWorkflowTask.findUnique({where:{id:taskId}});
     if (!task || task.lane !== "auto_director") throw new AppError("找不到可重试的开书任务。",404);
@@ -25,8 +56,18 @@ export async function prepareOpeningRetry(taskId: string) {
     const idempotencyKey = `opening-retry:${failed.id}`;
     const replay = await tx.directorRunCommand.findUnique({where:{taskId_commandType_idempotencyKey:{taskId,commandType:failed.commandType,idempotencyKey}}});
     if (replay) return toAcceptedResponse(replay);
-    const command = await tx.directorRunCommand.create({data:{taskId,commandType:failed.commandType,idempotencyKey,payloadJson:failed.payloadJson}});
-    await tx.novelWorkflowTask.update({where:{id:taskId},data:{status:"queued",pendingManualRecovery:false,lastError:null,cancelRequestedAt:null,heartbeatAt:new Date(),finishedAt:null}});
+    const command = await tx.directorRunCommand.create({data:{taskId,commandType:failed.commandType,idempotencyKey,payloadJson:refreshRetryLLMSelection(failed.payloadJson,failed.commandType,selection)}});
+    const currentState = readDirectorTaskState(task);
+    const seedPayloadJson = selection
+      ? serializeDirectorTaskState({
+        launch:currentState.launch,
+        run:{
+          ...currentState.run,
+          llmOverride:{provider:selection.provider,model:selection.model,temperature:selection.temperature},
+        },
+      })
+      : task.seedPayloadJson;
+    await tx.novelWorkflowTask.update({where:{id:taskId},data:{status:"queued",pendingManualRecovery:false,lastError:null,cancelRequestedAt:null,heartbeatAt:new Date(),finishedAt:null,seedPayloadJson}});
     return toAcceptedResponse(command);
   });
 }

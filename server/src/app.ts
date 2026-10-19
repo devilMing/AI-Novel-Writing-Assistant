@@ -63,6 +63,7 @@ import {
 } from "./services/bootstrap/SystemResourceBootstrapService";
 import { initializeRagSettingsCompatibility } from "./services/settings/RagCompatibilityBootstrapService";
 import onboardingRoutes from "./modules/setup/onboarding/http/onboardingRoutes";
+import chatGPTAuthRoutes from "./modules/setup/chatgpt-auth/http/chatGPTAuthRoutes";
 import { qualityDebtSettingsService } from "./services/settings/QualityDebtSettingsService";
 import { marketRadarService } from "./modules/marketRadar/application/MarketRadarService";
 import { DirectorWorker } from "./workers/directorWorker";
@@ -207,6 +208,7 @@ export function createApp() {
   app.use("/api/settings/auto-director", settingsAutoDirectorRouter);
   app.use("/api/auto-director/channel-callbacks", autoDirectorChannelCallbacksRouter);
   app.use("/api/settings", settingsRouter);
+  app.use("/api", chatGPTAuthRoutes);
   app.use("/api", onboardingRoutes);
   app.use("/api/astrology", astrologyRouter);
   if (parseEnvFlag(process.env.DIRECTOR_NEXT_ENABLED, true)) {
