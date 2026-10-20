@@ -15,6 +15,12 @@ test('AI recommended chapter count is not replaced by an untouched form default,
   assert.equal(payload(legacy).estimatedChapterCount,80);
   const restored=patchNovelBasicForm(initial,JSON.parse(JSON.stringify(initial)));
   assert.equal(payload(restored).estimatedChapterCount,undefined);
+  const restoredNull=patchNovelBasicForm(initial,{estimatedChapterCount:null});
+  assert.equal(restoredNull.estimatedChapterCount,80);
+  assert.equal(restoredNull.estimatedChapterCountSource,'default');
+  assert.equal(payload(restoredNull).estimatedChapterCount,undefined);
+  const contaminated={...initial,estimatedChapterCount:null,estimatedChapterCountSource:'user'};
+  assert.equal(payload(contaminated).estimatedChapterCount,undefined);
 });
 
 test("parseEstimatedChapterCountInput keeps an empty numeric field as an editing state", () => {

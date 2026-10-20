@@ -51,6 +51,11 @@ export function buildAutoDirectorRequestPayload(
   },
 ) {
   const commercialTags = normalizeCommercialTags(basicForm.commercialTagsText);
+  const estimatedChapterCount = Number.isInteger(basicForm.estimatedChapterCount)
+    && basicForm.estimatedChapterCount >= 1
+    && basicForm.estimatedChapterCount <= 2000
+    ? basicForm.estimatedChapterCount
+    : undefined;
   return {
     idea: idea.trim(),
     workflowTaskId: workflowTaskId || undefined,
@@ -80,7 +85,7 @@ export function buildAutoDirectorRequestPayload(
     aiFreedom: basicForm.aiFreedom,
     postGenerationStyleReviewEnabled: basicForm.postGenerationStyleReviewEnabled,
     defaultChapterLength: basicForm.defaultChapterLength,
-    estimatedChapterCount: basicForm.estimatedChapterCountSource === "default" ? undefined : basicForm.estimatedChapterCount,
+    estimatedChapterCount: basicForm.estimatedChapterCountSource === "default" ? undefined : estimatedChapterCount,
     projectStatus: basicForm.projectStatus,
     storylineStatus: basicForm.storylineStatus,
     outlineStatus: basicForm.outlineStatus,

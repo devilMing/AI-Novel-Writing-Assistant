@@ -317,8 +317,14 @@ export function patchNovelBasicForm(
   previous: NovelBasicFormState,
   patch: Partial<NovelBasicFormState>,
 ): NovelBasicFormState {
-  const next = { ...previous, ...patch };
-  if (patch.estimatedChapterCount !== undefined && patch.estimatedChapterCountSource === undefined) {
+  const normalizedPatch = { ...patch };
+  const estimatedChapterCount = patch.estimatedChapterCount as unknown;
+  if (Object.prototype.hasOwnProperty.call(patch, "estimatedChapterCount")
+    && (!Number.isInteger(estimatedChapterCount) || (estimatedChapterCount as number) < 1 || (estimatedChapterCount as number) > 2000)) {
+    delete normalizedPatch.estimatedChapterCount;
+  }
+  const next = { ...previous, ...normalizedPatch };
+  if (normalizedPatch.estimatedChapterCount !== undefined && normalizedPatch.estimatedChapterCountSource === undefined) {
     next.estimatedChapterCountSource = "user";
   }
   if (
