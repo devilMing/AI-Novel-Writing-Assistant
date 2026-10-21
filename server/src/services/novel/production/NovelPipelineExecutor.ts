@@ -34,8 +34,6 @@ import {
   beginChapterUsage,
   DIRECTOR_CHAPTER_PREFLIGHT_RESERVE_TOKENS,
   readChapterUsageCounters,
-  pauseChapterBudget,
-  chapterBudgetView,
   observeChapterUsage,
   finalizeChapterUsage,
 } from "./usage";
@@ -549,14 +547,13 @@ export class NovelPipelineExecutor {
             }
           }
 
-          const checkChapterBudget = async (closed = false, reserveTokens = 0, stage: DirectorChapterBudgetStage | null = null) => {
+          const checkpointChapterUsage = async (closed = false, _reserveTokens = 0, _stage: DirectorChapterBudgetStage | null = null) => {
             if (!runtimePayload.directorNext) return;
             const usage = await readChapterUsageCounters(jobId);
             let initialized: boolean;
-            let observed: ReturnType<typeof observeChapterUsage>;
             try {
               initialized = beginChapterUsage(runtimePayload.directorNext, chapter.id, chapter.order, usage.job, usage.batch);
-              observed = closed
+              closed
                 ? finalizeChapterUsage(runtimePayload.directorNext, chapter.id, usage.job, usage.batch)
                 : observeChapterUsage(runtimePayload.directorNext, chapter.id, usage.job, usage.batch);
             } catch (error) {
@@ -564,9 +561,9 @@ export class NovelPipelineExecutor {
                 "runtime.data_integrity", "chapter_usage", chapter.id, chapter.order);
             }
             const row = runtimePayload.directorNext.chapterUsage!.find(item => item.chapterId === chapter.id)!;
-            const normalizedReserve = Math.max(0, Math.floor(reserveTokens));
-            const paused = pauseChapterBudget(row, normalizedReserve, stage);
-            if (initialized || closed || paused) {
+            const clearedLegacyPause = row.budgetPause !== undefined;
+            delete row.budgetPause;
+            if (initialized || closed || clearedLegacyPause) {
               try {
                 await this.updateJobRequired(jobId, {
                   ...(closed ? { completedCount: completed + 1, progress: Number(((completed + 1) / totalCount).toFixed(4)) } : {}),
@@ -578,17 +575,8 @@ export class NovelPipelineExecutor {
                   "runtime.persistence_failed", "chapter_usage", chapter.id, chapter.order);
               }
             }
-            if (paused) {
-              const budget = chapterBudgetView(jobId, row);
-              const unit = budget.metric === "uncached_tokens_v1" ? "有效 Tokens" : "Tokens";
-              const message = observed.exceeded
-                ? `第${chapter.order}章累计 AI 用量达到 ${budget.usedTokens} ${unit}，本章上限 ${budget.tokenLimit}，${closed ? "正文已保存，" : ""}请从导演台调整本章额度后继续。`
-                : `第${chapter.order}章当前已用 ${budget.usedTokens} ${unit}，下一步预留 ${normalizedReserve} Tokens 后将接近本章上限 ${budget.tokenLimit}，${closed ? "正文已保存，" : ""}请从导演台调整本章额度后继续。`;
-              throw new PipelineIssueFailure(message,
-                "runtime.token_budget_exceeded", "chapter_usage", chapter.id, chapter.order);
-            }
           };
-          if (!recoveringSavedQuality) await checkChapterBudget();
+          if (!recoveringSavedQuality) await checkpointChapterUsage();
 
           let shouldStopAfterCurrentChapter = false;
           let chapterStopAction: "pause_for_manual" | "fail_task" | null = null;
@@ -655,11 +643,11 @@ export class NovelPipelineExecutor {
             previouslyConsumed = chapterRetryCountUsed = await this.automaticAttempts.used(jobId, chapter.id);
             const reviewRetryBudget = createPersistedChapterReviewRetryBudget({ novelId, chapterId: chapter.id,
               executionId: jobId, policy: resolveChapterReviewRetryPolicy(issueGovernance?.policy),
-              beforeRequest: async () => { await checkCancelled(); await checkChapterBudget(false, DIRECTOR_CHAPTER_PREFLIGHT_RESERVE_TOKENS, "review"); } });
+              beforeRequest: async () => { await checkCancelled(); await checkpointChapterUsage(false, DIRECTOR_CHAPTER_PREFLIGHT_RESERVE_TOKENS, "review"); } });
             while (!chapterResult) {
               try {
                 await checkCancelled();
-                await checkChapterBudget();
+                await checkpointChapterUsage();
                 chapterResult = await withChapterReviewRetryBudget(reviewRetryBudget, () => this.chapterRuntimeCoordinator.runPipelineChapter(
                   novelId,
                   chapter.id,
@@ -681,7 +669,7 @@ export class NovelPipelineExecutor {
                   },
                   {
                   onCheckCancelled: checkCancelled,
-                  onCheckBudget: (reserveTokens = DIRECTOR_CHAPTER_PREFLIGHT_RESERVE_TOKENS, stage) => checkChapterBudget(false, reserveTokens, stage),
+                  onCheckBudget: (reserveTokens = DIRECTOR_CHAPTER_PREFLIGHT_RESERVE_TOKENS, stage) => checkpointChapterUsage(false, reserveTokens, stage),
                   onStageChange: async (stage) => {
                     await applyChapterStage(stage);
                   },
@@ -839,7 +827,7 @@ export class NovelPipelineExecutor {
             onIssueDecision: decision => {runtimePayload.directorNext?.decisions.push({...decision, chapterOrder: chapter.order});},
             // Persist local quality facts before freezing/pausing, while future
             // planning remains outside the saved chapter's token boundary.
-            beforeFuturePlanning: recoveringSavedQuality ? undefined : () => checkChapterBudget(true),
+            beforeFuturePlanning: recoveringSavedQuality ? undefined : () => checkpointChapterUsage(true),
           });
           shouldStopAfterCurrentChapter = closure.shouldStopAfterCurrentChapter;
           chapterStopAction = closure.stopAction;
