@@ -137,6 +137,11 @@ export function renderedBudget() {
     assert.match(production.running,/等待本批次完成/);
     assert.doesNotMatch(production.running,/id="director-start"/);
     assert.match(production.completed,/提交并生成第 4—6 章/);
+    assert.match(production.completed,/一键写作全文/);
+    assert.match(production.completed,/第 4—12 章/);
+    assert.match(production.completed,/逐章补齐路线、章节任务、正文、审核与修复/);
+    assert.match(production.completed,/每章完成后自动保存/);
+    assert.doesNotMatch(production.running,/一键写作全文/);
     assert.match(production.completed,/更多创作设置/);
     assert.ok(production.completed.indexOf('正在做什么')<production.completed.indexOf('id="director-start"'),'status and next-step context come before launch settings');
     const budget=renderedBudget();

@@ -8,7 +8,7 @@ import { webcrypto } from 'node:crypto';
 
 const clientDir = fileURLToPath(new URL('../', import.meta.url));
 const output = path.join(clientDir, 'tests', `.director-commands-${process.pid}.mjs`);
-let exercise, exerciseContinuation;
+let exercise, exerciseContinuation, exerciseFullBookContinuation;
 
 before(async () => {
   const { build } = createRequire(import.meta.resolve('vite'))('esbuild');
@@ -50,6 +50,26 @@ export async function exerciseContinuation(driver) {
     captured.length=0;
     renderToStaticMarkup(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/lab/director/book']}><Routes><Route path='/lab/director/:novelId' element={<DirectorNovelPage/>}/></Routes></MemoryRouter></QueryClientProvider>);
     await captured.at(-1).mutationFn();
+    return posts;
+  } finally {client.clear();}
+}
+export async function exerciseFullBookContinuation() {
+  useLLMStore.getState().setSelection({provider:'deepseek',model:'deepseek-flash',temperature:0.7});
+  Object.assign(useLLMStore.getInitialState(),useLLMStore.getState());
+  const posts=[];
+  apiClient.defaults.adapter=async config=>{
+    if(config.method!=='post' || config.url!=='/director-next/commands') throw new Error('Unexpected request');
+    posts.push(JSON.parse(config.data));
+    return {status:200,statusText:'OK',headers:{},config,data:{success:true,data:{runId:'full-book-run',controlVersion:1}}};
+  };
+  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+  try {
+    captured.length=0;
+    renderToStaticMarkup(<QueryClientProvider client={client}><MemoryRouter>
+      <DirectorStart novelId='book' estimatedChapterCount={30} nextChapter={8} initialStory='朝堂权谋复仇'
+        suggestedRange={{from:8,to:10}} initialDriver='assisted'/>
+    </MemoryRouter></QueryClientProvider>);
+    await captured.at(-1).mutationFn('full_book');
     return posts;
   } finally {client.clear();}
 }
@@ -104,7 +124,7 @@ export function useMutation(options) {captured.push(options);return realUseMutat
 `}));
     }}],
   });
-  ({exercise,exerciseContinuation}=await import(pathToFileURL(output).href));
+  ({exercise,exerciseContinuation,exerciseFullBookContinuation}=await import(pathToFileURL(output).href));
 });
 
 after(() => {if(fs.existsSync(output)) fs.unlinkSync(output);});
@@ -163,4 +183,14 @@ test('starting chapter production from the real novel page inherits both automat
     assert.equal(posts[0].driver,driver,'starting a new chapter range must inherit the previous run mode');
     assert.deepEqual(posts[0].launchInput.executionRange,{from:1,to:10});
   }
+});
+
+test('one-click full-book writing authorizes the remaining book through the existing automatic run',async()=>{
+  const posts=await exerciseFullBookContinuation();
+  assert.equal(posts.length,1);
+  const {idempotencyKey,...command}=posts[0];
+  assert.ok(idempotencyKey);
+  assert.deepEqual(command,{type:'open_run',novelId:'book',driver:'auto',stepIdsInScope:null,
+    launchInput:{storyInput:'朝堂权谋复仇',estimatedChapterCount:30,worldMode:'skip',targetMode:'opening',provider:'deepseek',
+      model:'deepseek-flash',temperature:0.7,issuePolicyMode:'completion_first',executionRange:{from:8,to:30}}});
 });

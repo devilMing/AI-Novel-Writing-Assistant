@@ -19,6 +19,17 @@ test('real production composition registers all adapters and freezes complete po
  assert.equal(planning.stepIdsInScope.includes('chapter_batch'),false);assert.equal(planning.chapterRange,null);
  assert.throws(()=>options.contractFactory({runId:'bad',novelId:'novel',driver:'auto',stepIdsInScope:['chapter_batch'],launchInput:{...launchInput,executionRange:undefined}}),/授权范围/);
 });
+test('a full-book continuation keeps the remaining range and all production steps',()=>{
+ const fullBook=options.contractFactory({runId:'full-book',novelId:'novel',driver:'auto',stepIdsInScope:null,
+  launchInput:{...launchInput,estimatedChapterCount:30,executionRange:{from:8,to:30}}});
+ assert.equal(fullBook.driver,'auto');
+ assert.deepEqual(fullBook.chapterRange,{from:8,to:30});
+ assert.equal(fullBook.scope,'chapters:8-30');
+ assert.equal(fullBook.stepIdsInScope,null);
+ assert.ok(options.plan.steps.some(step=>step.id==='chapter_detail_bundle'));
+ assert.ok(options.plan.steps.some(step=>step.id==='execution_contract_sync'));
+ assert.ok(options.plan.steps.some(step=>step.id==='chapter_batch'));
+});
 test('every production confirmation stays in its own new director workspace', async () => {
  const {ProjectionService}=require('../../../dist/modules/director/application');
  const expectedGates=['character_cast','volume_strategy','chapter_task_sheet','chapter_execution_contract','chapter_batch_closed'];
