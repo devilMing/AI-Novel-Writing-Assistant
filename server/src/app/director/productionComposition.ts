@@ -19,7 +19,7 @@ import {buildDirectorCompletionProfile} from "@ai-novel/shared/types/directorCom
 import { DIRECTOR_ISSUE_POLICY_PRESETS, directorIssuePolicySchema } from "@ai-novel/shared/types/directorIssue";
 import { requireLaunch, modelOptions, bookContractInput, targetVolume, executionWindow } from "./productionInputs";
 import { readBatchOutcome } from "./batchOutcome";
-import {readEditedArtifact, resumeBusiness, cancelBusiness} from "./savedContent";
+import {readEditedArtifact, pauseBusiness, resumeBusiness, cancelBusiness} from "./savedContent";
 import {readExistingAssets} from "./existingAssets";
 import {isCurrentV2ChapterProductionCompleted as isCurrentChapterProductionCompleted} from "../../services/novel/production/completion";
 import {CHAPTER_ARTIFACT_BOUNDARY_TYPE} from "../../services/novel/runtime/artifactSync";
@@ -108,7 +108,7 @@ export function createDirectorProductionOptions(): DirectorNextServiceOptions {
       readOutcome: readBatchOutcome, waitForPoll: () => new Promise(resolve => setTimeout(resolve, 1000)),
       isRunActive: async runId => (await prisma.directorNextRunControl.findUnique({where: {runId}, select: {status: true}}))?.status === "running", contentHash}),
   }));
-  return {prepareGate: prepareEditedChapterGate, plan: directorProductionPlan, stepRegistry, readEditedArtifact, resumeBusiness, cancelBusiness,
+  return {prepareGate: prepareEditedChapterGate, plan: directorProductionPlan, stepRegistry, readEditedArtifact, pauseBusiness, resumeBusiness, cancelBusiness,
     executionBoundary: {
       beforeOpen: async (novelId, tx) => {
         await tx.novel.update({where: {id: novelId}, data: {directorEpoch: {increment: 0}}});

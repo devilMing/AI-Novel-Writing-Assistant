@@ -12,6 +12,8 @@ import {saveChapterPlanEdit} from "./revisions/chapterPlan";
 import {authorizeChapterBudget, readPausedChapterBudget, readChapterUsageCounters, observeChapterUsage} from "../../services/novel/production/usage";
 import type {DirectorChapterBudgetGrant} from "@ai-novel/shared/types/director/chapterBudget";
 
+const USER_PAUSE_MESSAGE = "全文写作已由你暂停，继续后将从已保存进度恢复。";
+
 /** Reads saved business assets in the same transaction as gate confirmation. */
 export async function readEditedArtifact(input: {contract: RunContract; type: string; contentRef: string; chapterPlanEdit?: import("@ai-novel/shared/types/director/revision").ChapterPlanEdit}, tx: Prisma.TransactionClient) {
   if (input.chapterPlanEdit) {
@@ -107,12 +109,34 @@ export async function resumeBusiness(contract: RunContract, tx: Prisma.Transacti
     }
     payload.directorNext.resolvedDecisionCount = payload.directorNext.decisions.length;
     payload.replanAlertDetails = [];
-    const data = {pendingManualRecovery: false, payload: stringifyPipelinePayload(payload)};
+    const data = {pendingManualRecovery: false, payload: stringifyPipelinePayload(payload),
+      ...(job.error === USER_PAUSE_MESSAGE ? {error: null} : {})};
     if (chapterBudget) {
       const changed = await tx.generationJob.updateMany({where: {id: job.id, pendingManualRecovery: true, payload: job.payload},data});
       if (changed.count !== 1) throw new AppError("暂停状态发生变化，请刷新后重试。",409);
     } else await tx.generationJob.update({where: {id: job.id}, data});
   }
+}
+
+export async function pauseBusiness(contract: RunContract, tx: Prisma.TransactionClient) {
+  const event = await tx.directorNextEvent.findFirst({where: {runId: contract.runId, type: "chapter_batch_job"}, orderBy: {seq: "desc"}});
+  if (!event) return;
+  const binding = JSON.parse(event.payloadJson) as {jobId?: unknown};
+  if (typeof binding.jobId !== "string") throw new Error("正文暂停绑定无效。");
+  const job = await tx.generationJob.findUniqueOrThrow({where: {id: binding.jobId}});
+  const payload = parsePipelinePayload(job.payload);
+  if (job.novelId !== contract.novelId || payload.directorNext?.runId !== contract.runId) {
+    throw new Error("正文作业不属于本次运行。");
+  }
+  if (job.status === "succeeded") return;
+  if (!["queued", "running"].includes(job.status) || job.pendingManualRecovery || job.cancelRequestedAt) {
+    throw new AppError("正文写作状态已变化，请刷新后重试。", 409);
+  }
+  const changed = await tx.generationJob.updateMany({
+    where: {id: job.id, status: {in: ["queued", "running"]}, pendingManualRecovery: false, cancelRequestedAt: null},
+    data: {pendingManualRecovery: true, error: USER_PAUSE_MESSAGE},
+  });
+  if (changed.count !== 1) throw new AppError("正文写作状态已变化，请刷新后重试。", 409);
 }
 
 export async function cancelBusiness(contract: RunContract, tx: Prisma.TransactionClient) {

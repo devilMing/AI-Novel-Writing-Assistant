@@ -22,6 +22,7 @@ import {
   withDirectorExecution,
   type ArtifactEditReader,
   type BusinessResume,
+  type BusinessPause,
   type RunOpenBoundary,
 } from "./infrastructure";
 import type { DirectorNextHttpDeps } from "./http";
@@ -82,6 +83,7 @@ export interface DirectorNextServiceOptions {
   prepareOpen?: CommandServiceDeps["prepareOpen"];
   prepareGate?: CommandServiceDeps["prepareGate"];
   readEditedArtifact?: ArtifactEditReader;
+  pauseBusiness?: BusinessPause;
   resumeBusiness?: BusinessResume;
   cancelBusiness?: BusinessResume;
   artifactTypes?: ProjectionServiceDeps["artifactTypes"];
@@ -95,7 +97,7 @@ export function createDirectorNextServices(options: DirectorNextServiceOptions =
   const artifactLedger = new PrismaArtifactLedger();
   const qualityDebtRepository = new PrismaQualityDebtRepository();
   const eventLog = new PrismaEventLog();
-  const commandRepository = new PrismaCommandRepository(undefined, {readEditedArtifact: options.readEditedArtifact, resumeBusiness: options.resumeBusiness, cancelBusiness: options.cancelBusiness,
+  const commandRepository = new PrismaCommandRepository(undefined, {readEditedArtifact: options.readEditedArtifact, pauseBusiness: options.pauseBusiness, resumeBusiness: options.resumeBusiness, cancelBusiness: options.cancelBusiness,
     beforeRetry: options.executionBoundary?.beforeRetry});
   const runtime = createDirectorRuntime();
   const factsLoader = new FactsLoader({ runRepository, artifactLedger, qualityDebtRepository, eventLog });

@@ -1,4 +1,4 @@
-import { VersionConflictError, type RunContract, type RunControl, type RunLaunchInput } from "../domain";
+import { isFullBookAutopilotContract, USER_REQUESTED_FULL_BOOK_PAUSE, VersionConflictError, type RunContract, type RunControl, type RunLaunchInput } from "../domain";
 import type {
   CommandExecutionInput,
   CommandRepository,
@@ -14,6 +14,7 @@ export type DirectorCommand =
   | {type: "retry_start"; runId: string; expectedVersion: number; idempotencyKey: string}
   | { type: "open_run"; novelId: string; driver: RunContract["driver"]; stepIdsInScope: string[] | null; launchInput?: RunLaunchInput; idempotencyKey: string }
   | { type: "resolve_gate"; runId: string; decision: "confirm" | "confirm_after_edit" | "regenerate"; guidance?: string; chapterPlanEdit?: import("@ai-novel/shared/types/director/revision").ChapterPlanEdit; expectedVersion: number; idempotencyKey: string }
+  | { type: "pause"; runId: string; expectedVersion: number; idempotencyKey: string }
   | { type: "resume"; runId: string; expectedVersion: number; idempotencyKey: string; chapterBudget?: DirectorChapterBudgetGrant }
   | { type: "handoff"; runId: string; toDriver: RunContract["driver"]; expectedVersion: number; idempotencyKey: string }
   | { type: "cancel"; runId: string; expectedVersion: number; idempotencyKey: string };
@@ -125,6 +126,8 @@ export class CommandService {
         return this.openRun(command);
       case "resolve_gate":
         return this.resolveGate(command);
+      case "pause":
+        return this.pause(command);
       case "resume":
         return this.resume(command);
       case "retry_start":
@@ -169,6 +172,24 @@ export class CommandService {
       throw new InvalidDirectorCommandError("只能为预算暂停中的章节追加有效额度。");
     }
     return this.transition(command, { type: "resume" });
+  }
+
+  private async pause(command: Extract<DirectorCommand, {type: "pause"}>): Promise<DirectorCommandResult> {
+    const [control, contract] = await Promise.all([
+      this.requireControl(command.runId),
+      this.deps.runRepository.getContract(command.runId),
+    ]);
+    if (!contract) throw new InvalidDirectorCommandError("找不到要暂停的创作。");
+    if (control.status !== "running") {
+      throw new InvalidDirectorCommandError("只有正在进行的全文写作可以暂停。");
+    }
+    if (!isFullBookAutopilotContract(contract)) {
+      throw new InvalidDirectorCommandError("只有全文自动写作可以使用暂停全文。");
+    }
+    return this.transition(command, {
+      type: "pause",
+      pause: {kind: "manual_recovery", reason: USER_REQUESTED_FULL_BOOK_PAUSE},
+    });
   }
 
   private async resolveGate(command: Extract<DirectorCommand, { type: "resolve_gate" }>): Promise<DirectorCommandResult> {

@@ -16,6 +16,7 @@ import type {
 } from "../application/ports";
 import {commitGateResolution, type ArtifactEditReader} from "./commands/gateResolution";
 import {commitExplicitResume, type BusinessResume} from "./commands/resumeRun";
+import {commitExplicitPause, type BusinessPause} from "./commands/pauseRun";
 
 function parseJson<T>(value: string | null): T | null {
   return value ? JSON.parse(value) as T : null;
@@ -86,7 +87,7 @@ function fromRow(row: {
 }
 
 export class PrismaCommandRepository implements CommandRepository {
-  constructor(private readonly db: PrismaClient = prisma, private readonly options: {readEditedArtifact?: ArtifactEditReader; resumeBusiness?: BusinessResume; cancelBusiness?: BusinessResume;
+  constructor(private readonly db: PrismaClient = prisma, private readonly options: {readEditedArtifact?: ArtifactEditReader; pauseBusiness?: BusinessPause; resumeBusiness?: BusinessResume; cancelBusiness?: BusinessResume;
     beforeRetry?: (contract: RunContract, tx: Prisma.TransactionClient) => Promise<void>} = {}) {}
 
   async find(idempotencyKey: string): Promise<DirectorCommandRecord | null> {
@@ -152,6 +153,10 @@ export class PrismaCommandRepository implements CommandRepository {
       if (input.event.type === "cancel" && this.options.cancelBusiness) {
         const run = await tx.directorNextRun.findUniqueOrThrow({where: {id: input.runId}, select: {contractJson: true}});
         await this.options.cancelBusiness(JSON.parse(run.contractJson) as RunContract, tx);
+      }
+      if (input.event.type === "pause") {
+        const run = await tx.directorNextRun.findUniqueOrThrow({where: {id: input.runId}, select: {contractJson: true}});
+        await commitExplicitPause(tx, JSON.parse(run.contractJson) as RunContract, this.options.pauseBusiness);
       }
       if (input.event.type === "resume") {
         const run = await tx.directorNextRun.findUniqueOrThrow({where: {id: input.runId}, select: {contractJson: true}});

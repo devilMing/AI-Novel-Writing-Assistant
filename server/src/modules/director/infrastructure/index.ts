@@ -6,4 +6,5 @@ export * from "./prismaCommandRepository";
 export * from "./artifactContentHash";
 export type {ArtifactEditReader} from "./commands/gateResolution";
 export type {BusinessResume} from "./commands/resumeRun";
+export type {BusinessPause} from "./commands/pauseRun";
 export {withDirectorExecution} from "./execution";

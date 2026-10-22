@@ -1,5 +1,5 @@
 const test=require('node:test');const assert=require('node:assert/strict');
-const {resumeBusiness,cancelBusiness}=require('../../../dist/app/director/savedContent');
+const {resumeBusiness,pauseBusiness,cancelBusiness}=require('../../../dist/app/director/savedContent');
 const {parsePipelinePayload}=require('../../../dist/services/novel/pipelineJobState');
 const decision={issueCode:'quality.replan_required',action:'pause_for_manual',reason:'章节路线需要调整',locked:true,policySource:'task_snapshot',retryExhaustedAction:'pause_for_manual',chapterOrder:1};
 test('explicit replan recovery requires a saved route newer than the paused job and retains issue history',async()=>{
@@ -17,4 +17,20 @@ test('cancelling a run requests only owned jobs and leaves foreign jobs and pros
   {id:'pending',status:'queued',payload:JSON.stringify({directorNext:{runId:'run',decisions:[]}})}],update:async input=>updates.push(input)}};
  await cancelBusiness({runId:'run',novelId:'book'},tx);
  assert.deepEqual(updates.map(row=>row.where.id),['owned','pending']);assert.ok(updates[0].data.cancelRequestedAt instanceof Date);assert.equal(updates[0].data.status,undefined);assert.equal(updates[1].data.status,'cancelled');
+});
+test('pausing full-book writing marks only the bound active job for manual recovery',async()=>{
+ let job={id:'job',novelId:'book',status:'running',pendingManualRecovery:false,cancelRequestedAt:null,error:null,
+  payload:JSON.stringify({directorNext:{runId:'run',decisions:[]}})};
+ let update,resumeUpdate;
+ const tx={directorNextEvent:{findFirst:async()=>({payloadJson:JSON.stringify({jobId:'job'})})},generationJob:{
+  findUniqueOrThrow:async()=>job,updateMany:async input=>{update=input;job={...job,...input.data};return {count:1};},
+  update:async input=>{resumeUpdate=input;job={...job,...input.data};}}};
+ await pauseBusiness({runId:'run',novelId:'book'},tx);
+ assert.deepEqual(update.where,{id:'job',status:{in:['queued','running']},pendingManualRecovery:false,cancelRequestedAt:null});
+ assert.equal(update.data.pendingManualRecovery,true);
+ assert.match(update.data.error,/暂停/);
+ await resumeBusiness({runId:'run',novelId:'book'},tx);
+ assert.equal(resumeUpdate.where.id,'job');
+ assert.equal(resumeUpdate.data.pendingManualRecovery,false);
+ assert.equal(resumeUpdate.data.error,null);
 });

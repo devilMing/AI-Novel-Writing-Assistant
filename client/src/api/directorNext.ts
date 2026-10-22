@@ -41,7 +41,7 @@ export interface DirectorAction {
   label: string;
   kind: "command" | "navigate";
   primary: boolean;
-  command?: "resume" | "cancel" | "open_run" | "handoff" | "retry_start";
+  command?: "pause" | "resume" | "cancel" | "open_run" | "handoff" | "retry_start";
   toDriver?: DirectorDriver;
   target?: string;
 }
@@ -102,6 +102,7 @@ export type DirectorCommand =
     executionRange?: {from: number; to: number}; issuePolicyMode?: "completion_first" | "quality_first";
   } }
   | { type: "resolve_gate"; runId: string; decision: "confirm" | "confirm_after_edit" | "regenerate"; guidance?: string; chapterPlanEdit?: import("@ai-novel/shared/types/director/revision").ChapterPlanEdit; expectedVersion: number; idempotencyKey: string }
+  | { type: "pause"; runId: string; expectedVersion: number; idempotencyKey: string }
   | { type: "resume"; runId: string; expectedVersion: number; idempotencyKey: string; chapterBudget?: import("@ai-novel/shared/types/director/chapterBudget").DirectorChapterBudgetGrant }
   | { type: "handoff"; runId: string; toDriver: DirectorDriver; expectedVersion: number; idempotencyKey: string }
   | { type: "cancel"; runId: string; expectedVersion: number; idempotencyKey: string };

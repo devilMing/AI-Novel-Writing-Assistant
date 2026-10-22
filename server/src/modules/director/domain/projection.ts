@@ -13,6 +13,7 @@ import type {
   RunControl,
   RunStatus,
 } from "./types";
+import {isFullBookAutopilotContract, USER_REQUESTED_FULL_BOOK_PAUSE} from "./types";
 
 export interface ArtifactTypeInfo {
   label: string;
@@ -25,7 +26,7 @@ export interface ActionDescriptor {
   label: string;
   kind: "command" | "navigate";
   primary: boolean;
-  command?: "resume" | "cancel" | "open_run" | "handoff" | "retry_start";
+  command?: "pause" | "resume" | "cancel" | "open_run" | "handoff" | "retry_start";
   toDriver?: Driver;
   target?: string;
 }
@@ -113,6 +114,14 @@ const CANCEL_ACTION: ActionDescriptor = {
   command: "cancel",
 };
 
+const PAUSE_FULL_BOOK_ACTION: ActionDescriptor = {
+  id: "pause",
+  label: "暂停全文写作",
+  kind: "command",
+  primary: true,
+  command: "pause",
+};
+
 export function project(input: ProjectionInput): DashboardView {
   const { contract, control, plan, facts, artifactTypes, sourceRoute } = input;
 
@@ -150,7 +159,7 @@ export function project(input: ProjectionInput): DashboardView {
           : `正在准备或收尾第 ${chapterProgress.from}—${chapterProgress.to} 章`;
         nextActionGuidance = "请等待本批次写作、检查和保存完成；需要你确认或处理问题时，会在这里提示。";
       }
-      availableActions = [CANCEL_ACTION];
+      availableActions = isFullBookAutopilotContract(contract) ? [PAUSE_FULL_BOOK_ACTION, CANCEL_ACTION] : [CANCEL_ACTION];
       break;
     }
     case "waiting_gate": {
@@ -185,6 +194,8 @@ export function project(input: ProjectionInput): DashboardView {
           ? `本阶段生成失败：${input.executionFailure.trim()} 自动重试已结束。`
           : "本阶段生成中断，自动重试已结束。";
       }
+      const userPausedFullBook = control.pause?.reason === USER_REQUESTED_FULL_BOOK_PAUSE
+        && isFullBookAutopilotContract(contract);
       if (detail === "rejection_budget_exhausted" || detail === "protected_content") {
         const rejection = input.actionRejection;
         const step = plan.steps.find(row => row.id === rejection?.stepId);
@@ -200,7 +211,11 @@ export function project(input: ProjectionInput): DashboardView {
           ?? "本次推进未通过创作保护检查，请核对已保存结果与运行记录中的拒绝原因后继续。";
       }
       nextActionGuidance = "请先查看下方暂停原因，处理后点击“从保存进度继续”；已有正文会保留。";
-      if (pauseKind === "replan") {
+      if (userPausedFullBook) {
+        headline = "全文写作已暂停";
+        detail = "已保存的规划与正文会保留。";
+        nextActionGuidance = "点击“继续全文写作”，AI 将从已保存进度接着完成剩余章节。";
+      } else if (pauseKind === "replan") {
         headline = "需要重新规划后继续";
         nextActionGuidance = "请查看下方暂停原因，再点击“重新规划后继续”，让 AI 调整后续计划。";
       } else if (pauseKind === "safety") {
@@ -211,7 +226,7 @@ export function project(input: ProjectionInput): DashboardView {
       availableActions = [
         {
           id: "resume",
-          label: pauseKind === "replan" ? "重新规划后继续" : "从保存进度继续",
+          label: userPausedFullBook ? "继续全文写作" : pauseKind === "replan" ? "重新规划后继续" : "从保存进度继续",
           kind: "command",
           primary: true,
           command: "resume",

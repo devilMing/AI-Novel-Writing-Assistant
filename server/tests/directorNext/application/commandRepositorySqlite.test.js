@@ -32,12 +32,14 @@ const { contract } = require(path.join(serverRoot, "tests/directorNext/fixtures"
 (async () => {
   let sequence = 0;
   const runRepository = new PrismaRunRepository(prisma);
-  const commandRepository = new PrismaCommandRepository(prisma);
+  const pauseCalls = [];
+  const commandRepository = new PrismaCommandRepository(prisma, {pauseBusiness: async contract => pauseCalls.push(contract.runId)});
   const service = new CommandService({
     runRepository,
     commandRepository,
     runtime: { nextId: () => "id-" + (++sequence) },
-    contractFactory: ({ runId, novelId, driver, stepIdsInScope }) => contract({ runId, novelId, driver, stepIdsInScope }),
+    contractFactory: ({ runId, novelId, driver, stepIdsInScope, launchInput }) => contract({ runId, novelId, driver, stepIdsInScope,
+      ...(launchInput ? {launchInput, chapterRange: launchInput.executionRange ?? null} : {}) }),
     prepareOpen: async () => [{type: 'novel_seed', scope: 'book', status: 'confirmed', protectedUserContent: true, contentRef: 'novel:novel-1', contentHash: 'seed-hash'}],
   });
   const first = await service.execute({ type: "open_run", novelId: "novel-1", driver: "auto", stepIdsInScope: null, idempotencyKey: "open-1" });
@@ -84,6 +86,14 @@ const { contract } = require(path.join(serverRoot, "tests/directorNext/fixtures"
   assert.deepEqual(await prisma.directorNextArtifact.findMany(), artifactsBeforeHandoff);
   assert.equal(await prisma.directorNextRunControl.count({where: {novelId: 'novel-1', status: {in: ['queued', 'running', 'paused', 'waiting_gate']}}}), 1);
   assert.equal((await service.execute({type: 'handoff', runId: handoff.runId, toDriver: 'auto', expectedVersion: 3, idempotencyKey: 'switch-back'})).replayed, true);
+  await service.execute({type: 'cancel', runId: back.runId, expectedVersion: 0, idempotencyKey: 'cancel-switched'});
+  const fullBook = await service.execute({type: 'open_run', novelId: 'novel-1', driver: 'auto', stepIdsInScope: null, idempotencyKey: 'open-full-book',
+    launchInput: {storyInput: '故事', estimatedChapterCount: 30, worldMode: 'skip', targetMode: 'opening', executionRange: {from: 4, to: 30}}});
+  await runRepository.transition(fullBook.runId, {type: 'start'}, 0);
+  const paused = await service.execute({type: 'pause', runId: fullBook.runId, expectedVersion: 1, idempotencyKey: 'pause-full-book'});
+  assert.equal(paused.controlVersion, 2);
+  assert.deepEqual(pauseCalls, [fullBook.runId]);
+  assert.equal((await runRepository.getControl(fullBook.runId)).status, 'paused');
   await prisma.$disconnect();
 })().catch(async (error) => {
   console.error(error);

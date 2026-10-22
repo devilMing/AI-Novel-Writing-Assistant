@@ -9,11 +9,11 @@ const {
 } = require("../../../dist/modules/director/application");
 const { VersionConflictError } = require("../../../dist/modules/director/domain");
 
-function setup({ activeRunId = null, control = runningControl() } = {}) {
+function setup({ activeRunId = null, control = runningControl(), runContract = contract() } = {}) {
   const calls = [];
   const commands = new Map();
   const controls = new Map([["run-1", control]]);
-  const runContracts = new Map([["run-1", contract()]]);
+  const runContracts = new Map([["run-1", runContract]]);
   const runRepository = {
     findActiveRunIdByNovel: async () => activeRunId,
     open: async (nextContract) => {
@@ -33,6 +33,7 @@ function setup({ activeRunId = null, control = runningControl() } = {}) {
       const next = { ...current, version: current.version + 1 };
       if (event.type === "cancel") next.status = "cancelled";
       if (event.type === "resume") next.status = "running";
+      if (event.type === "pause") next.status = "paused";
       controls.set(runId, next);
       return next;
     },
@@ -113,6 +114,21 @@ test("only a paused run can accept resume and other commands cannot clear it", a
   await assert.rejects(
     () => service.execute({ type: "resolve_gate", runId: "run-1", decision: "confirm", expectedVersion: 5, idempotencyKey: "gate-1" }),
     (error) => error.name === "InvalidDirectorCommandError",
+  );
+});
+
+test("only a running full-book automatic run can be paused by the user", async () => {
+  const fullBook = contract({chapterRange: {from: 4, to: 30}, launchInput: {estimatedChapterCount: 30}});
+  const {service, calls} = setup({runContract: fullBook});
+  await service.execute({type: "pause", runId: "run-1", expectedVersion: 1, idempotencyKey: "pause-1"});
+  assert.deepEqual(calls, [["transition", "run-1", {
+    type: "pause", pause: {kind: "manual_recovery", reason: "user_requested_full_book"},
+  }, 1]]);
+
+  const selected = setup({runContract: contract({chapterRange: {from: 4, to: 8}, launchInput: {estimatedChapterCount: 30}})});
+  await assert.rejects(
+    () => selected.service.execute({type: "pause", runId: "run-1", expectedVersion: 1, idempotencyKey: "pause-selected"}),
+    error => error.name === "InvalidDirectorCommandError",
   );
 });
 

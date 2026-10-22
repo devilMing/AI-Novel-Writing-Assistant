@@ -82,6 +82,15 @@ export interface RunContract {
   launchInput?: RunLaunchInput;
 }
 
+export const USER_REQUESTED_FULL_BOOK_PAUSE = "user_requested_full_book" as const;
+
+export function isFullBookAutopilotContract(contract: RunContract): boolean {
+  return contract.driver === "auto"
+    && contract.chapterRange !== null
+    && typeof contract.launchInput?.estimatedChapterCount === "number"
+    && contract.chapterRange.to === contract.launchInput.estimatedChapterCount;
+}
+
 export interface RunLaunchInput {
   storyInput: string;
   estimatedChapterCount: number;

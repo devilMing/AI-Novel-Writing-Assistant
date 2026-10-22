@@ -89,6 +89,32 @@ test("running view names the current step and offers only cancel", () => {
   assert.equal(view().headline, "正在推进创作");
 });
 
+test("full-book automatic writing exposes pause and resumes with full-book wording", () => {
+  const fullBook = contract({
+    chapterRange: {from: 4, to: 30},
+    launchInput: {estimatedChapterCount: 30},
+  });
+  const active = view({contract: fullBook, control: runningControl({cursorStepId: "chapter_batch"})});
+  assert.deepEqual(active.availableActions.map(action => [action.command, action.label, action.primary]), [
+    ["pause", "暂停全文写作", true],
+    ["cancel", "取消本次创作", false],
+  ]);
+
+  const paused = view({
+    contract: fullBook,
+    control: runningControl({status: "paused", pause: {kind: "manual_recovery", reason: "user_requested_full_book"}}),
+  });
+  assert.equal(paused.headline, "全文写作已暂停");
+  assert.equal(paused.availableActions[0].label, "继续全文写作");
+  assert.match(paused.nextActionGuidance, /已保存进度/);
+
+  const selectedRange = view({contract: contract({
+    chapterRange: {from: 4, to: 8},
+    launchInput: {estimatedChapterCount: 30},
+  })});
+  assert.equal(selectedRange.availableActions.some(action => action.command === "pause"), false);
+});
+
 test("both drivers can switch at a saved boundary, but not during a step or manual pause", () => {
   for (const driver of ["auto", "assisted"]) {
     const toDriver = driver === "auto" ? "assisted" : "auto";

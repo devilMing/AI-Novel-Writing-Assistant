@@ -59,6 +59,9 @@ function commandFor(action: DirectorAction, view: DashboardView, novelId: string
   if (action.command === "resume") {
     return { type: "resume", runId: view.runId, expectedVersion: view.sourceTrace.controlVersion, idempotencyKey };
   }
+  if (action.command === "pause") {
+    return { type: "pause", runId: view.runId, expectedVersion: view.sourceTrace.controlVersion, idempotencyKey };
+  }
   if (action.command === "retry_start") {
     return {type: "retry_start", runId: view.runId, expectedVersion: view.sourceTrace.controlVersion, idempotencyKey};
   }

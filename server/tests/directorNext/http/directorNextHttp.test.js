@@ -136,6 +136,21 @@ test("command endpoint validates and returns immediately with the run projection
   });
 });
 
+test("pause command is accepted with a versioned full-book run identity", async () => {
+  const received = [];
+  await withServer(deps({commandService: {execute: async command => {
+    received.push(command);
+    return {runId: command.runId, controlVersion: command.expectedVersion + 1, commandId: "pause", replayed: false};
+  }}}), async baseUrl => {
+    const command = {type: "pause", runId: "run-1", expectedVersion: 7, idempotencyKey: "pause-1"};
+    const response = await fetch(`${baseUrl}/api/director-next/commands`, {
+      method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(command),
+    });
+    assert.equal(response.status, 202);
+    assert.deepEqual(received, [command]);
+  });
+});
+
 test("revision commands retain human guidance and the chapter patch and reject malformed scenes before dispatch", async () => {
   const received = [];
   await withServer(deps({commandService: {execute: async command => {
