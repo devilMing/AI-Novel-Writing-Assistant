@@ -20,6 +20,32 @@ test("ChatGPT network normalizes the enabled Windows HTTPS proxy", () => {
   assert.equal(normalizeWindowsProxy(false, "127.0.0.1:10808"), null);
 });
 
+test("ChatGPT network reuses a reachable loopback proxy even when the Windows proxy switch is off", async () => {
+  const { resolveWindowsProxySettings } = loadNetworkModule();
+  assert.equal(typeof resolveWindowsProxySettings, "function");
+
+  const reachable = await resolveWindowsProxySettings(
+    false,
+    "127.0.0.1:10808",
+    async () => true,
+  );
+  assert.equal(reachable, "http://127.0.0.1:10808");
+
+  const stopped = await resolveWindowsProxySettings(
+    false,
+    "127.0.0.1:10808",
+    async () => false,
+  );
+  assert.equal(stopped, null);
+
+  const remote = await resolveWindowsProxySettings(
+    false,
+    "proxy.example.com:8080",
+    async () => true,
+  );
+  assert.equal(remote, null);
+});
+
 test("ChatGPT network adds a dispatcher only when a proxy is available", async () => {
   const { createOpenAIFetch } = loadNetworkModule();
   assert.equal(typeof createOpenAIFetch, "function");

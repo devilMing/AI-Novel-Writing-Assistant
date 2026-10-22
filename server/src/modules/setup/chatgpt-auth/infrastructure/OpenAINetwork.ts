@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { connect } from "node:net";
 import { promisify } from "node:util";
 import { ProxyAgent, type Dispatcher } from "undici";
 
@@ -34,6 +35,39 @@ export function normalizeWindowsProxy(enabled: boolean, raw: string | undefined)
   return normalizeProxyAddress(mapped.get("https") ?? mapped.get("http") ?? (mapped.size === 0 ? entries[0] : undefined));
 }
 
+async function canConnectToProxy(proxyUrl: string): Promise<boolean> {
+  const parsed = new URL(proxyUrl);
+  const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+  const host = parsed.hostname.replace(/^\[|\]$/gu, "");
+  return new Promise((resolve) => {
+    const socket = connect({ host, port });
+    let settled = false;
+    const finish = (reachable: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(reachable);
+    };
+    socket.setTimeout(300, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
+export async function resolveWindowsProxySettings(
+  enabled: boolean,
+  raw: string | undefined,
+  isReachable: (proxyUrl: string) => Promise<boolean> = canConnectToProxy,
+): Promise<string | null> {
+  const proxyUrl = normalizeWindowsProxy(true, raw);
+  if (!proxyUrl) return null;
+  if (enabled) return proxyUrl;
+
+  const hostname = new URL(proxyUrl).hostname.replace(/^\[|\]$/gu, "").toLowerCase();
+  if (hostname !== "localhost" && hostname !== "127.0.0.1" && hostname !== "::1") return null;
+  return await isReachable(proxyUrl) ? proxyUrl : null;
+}
+
 async function queryWindowsRegistryValue(name: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("reg", [
@@ -55,7 +89,7 @@ async function resolveWindowsProxy(): Promise<string | null> {
     queryWindowsRegistryValue("ProxyServer"),
   ]);
   const enabled = enabledValue === "0x1" || enabledValue === "1";
-  return normalizeWindowsProxy(enabled, server ?? undefined);
+  return resolveWindowsProxySettings(enabled, server ?? undefined);
 }
 
 async function resolveSystemProxyUrl(): Promise<string | null> {
